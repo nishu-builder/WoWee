@@ -3758,17 +3758,24 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     }
     const uint8_t storedHitLimit = std::min<uint8_t>(rawHitCount, 128);
 
+    bool truncatedTargets = false;
+
     data.hitTargets.reserve(storedHitLimit);
     for (uint16_t i = 0; i < rawHitCount; ++i) {
         // WotLK hit targets are packed GUIDs, like the caster and miss targets.
         if (!hasFullPackedGuid(packet)) {
             LOG_WARNING("Spell go: truncated hit targets at index ", i, "/", (int)rawHitCount);
+            truncatedTargets = true;
             break;
         }
         const uint64_t targetGuid = UpdateObjectParser::readPackedGuid(packet);
         if (i < storedHitLimit) {
             data.hitTargets.push_back(targetGuid);
         }
+    }
+    if (truncatedTargets) {
+        packet.setReadPos(startPos);
+        return false;
     }
     data.hitCount = static_cast<uint8_t>(data.hitTargets.size());
 
@@ -3789,18 +3796,21 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
         // REFLECT additionally appends uint32 reflectSpellId + uint8 reflectResult.
         if (!hasFullPackedGuid(packet)) {
             LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", (int)rawMissCount);
+            truncatedTargets = true;
             break;
         }
         SpellGoMissEntry m;
         m.targetGuid = UpdateObjectParser::readPackedGuid(packet);  // packed GUID in WotLK
         if (packet.getSize() - packet.getReadPos() < 1) {
             LOG_WARNING("Spell go: missing missType at miss index ", i, "/", (int)rawMissCount);
+            truncatedTargets = true;
             break;
         }
         m.missType = packet.readUInt8();
         if (m.missType == 11) {
             if (packet.getSize() - packet.getReadPos() < 5) {
                 LOG_WARNING("Spell go: truncated reflect payload at miss index ", i, "/", (int)rawMissCount);
+                truncatedTargets = true;
                 break;
             }
             (void)packet.readUInt32();
@@ -3809,6 +3819,10 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
         if (i < storedMissLimit) {
             data.missTargets.push_back(m);
         }
+    }
+    if (truncatedTargets) {
+        packet.setReadPos(startPos);
+        return false;
     }
     data.missCount = static_cast<uint8_t>(data.missTargets.size());
 
