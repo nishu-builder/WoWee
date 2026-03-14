@@ -3427,7 +3427,15 @@ bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& da
     if (packet.getSize() - packet.getReadPos() < 30) return false;
 
     size_t startPos = packet.getReadPos();
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
 
     // Validate core fields (spellId + damage + overkill + schoolMask + absorbed + resisted = 21 bytes)
@@ -3469,7 +3477,15 @@ bool SpellHealLogParser::parse(network::Packet& packet, SpellHealLogData& data) 
     if (packet.getSize() - packet.getReadPos() < 21) return false;
 
     size_t startPos = packet.getReadPos();
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
 
     // Validate remaining fields (spellId + heal + overheal + absorbed + critFlag = 17 bytes)
