@@ -175,6 +175,24 @@ struct M2BoneDiskVanilla {
     float pivot[3];                 // 12
 };                                  // Total: 108
 
+// TBC M2 bone structure (on-disk, 112 bytes). Like vanilla (28-byte tracks WITH
+// interpolation ranges) but with the boneNameCRC field that BC introduced (and
+// WotLK kept). TBC rotations are compressed int16[4] quaternions, NOT vanilla's
+// float[4] — see parseAnimTrackVanilla's compressedQuat flag.
+struct M2BoneDiskTBC {
+    int32_t keyBoneId;              // 4
+    uint32_t flags;                 // 4
+    int16_t parentBone;             // 2
+    uint16_t submeshId;             // 2
+    uint32_t boneNameCRC;           // 4 — added in BC
+    M2TrackDiskVanilla translation; // 28
+    M2TrackDiskVanilla rotation;    // 28
+    M2TrackDiskVanilla scale;       // 28
+    float pivot[3];                 // 12
+};                                  // Total: 112
+static_assert(sizeof(M2BoneDiskVanilla) == 108, "M2BoneDiskVanilla must be 108 bytes");
+static_assert(sizeof(M2BoneDiskTBC) == 112, "M2BoneDiskTBC must be 112 bytes");
+
 // M2 animation sequence structure (WotLK, 64 bytes)
 struct M2SequenceDisk {
     uint16_t id;
@@ -267,6 +285,8 @@ struct M2SkinSubmeshVanilla {
     uint16_t centerBoneIndex;
     float centerPosition[3];
 };
+static_assert(sizeof(M2SkinSubmesh) == 48, "M2SkinSubmesh must be 48 bytes");
+static_assert(sizeof(M2SkinSubmeshVanilla) == 32, "M2SkinSubmeshVanilla must be 32 bytes");
 
 // Embedded skin profile for vanilla M2 (no 'SKIN' magic, offsets are M2-file-relative)
 struct M2SkinProfileEmbedded {
@@ -504,13 +524,17 @@ void parseAnimTrack(const std::vector<uint8_t>& data,
 // Vanilla M2 range: indices into flat timestamp/key arrays for a given sequence
 struct M2Range { uint32_t start; uint32_t end; };
 
-// Parse a vanilla M2 animation track (version < 264).
-// Vanilla uses flat arrays with per-sequence M2Range indices, unlike WotLK's array-of-arrays.
-// Vanilla also uses Quaternion16 (simple x/32767) instead of WotLK's CompressedQuaternion.
+// Parse a vanilla/TBC M2 animation track (version < 264).
+// Both use flat arrays with per-sequence M2Range indices, unlike WotLK's array-of-arrays.
+// Rotation key format differs by version:
+//   - Vanilla (v256): C4Quaternion, full float[4] (16 bytes/key)
+//   - TBC (v260-263): compressed int16[4] quaternion (8 bytes/key), like WotLK
+// Set compressedQuat=true for TBC rotation tracks.
 void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
                            const M2TrackDiskVanilla& disk,
                            M2AnimationTrack& track,
-                           TrackType type) {
+                           TrackType type,
+                           bool compressedQuat = false) {
     track.interpolationType = disk.interpolationType;
     track.globalSequence = disk.globalSequence;
 
@@ -522,12 +546,12 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
     if (disk.ofsTimestamps + disk.nTimestamps * sizeof(uint32_t) > data.size()) return;
     auto allTimestamps = readArray<uint32_t>(data, disk.ofsTimestamps, disk.nTimestamps);
 
-    // Validate flat key array
-    // Vanilla stores rotations as full float quaternions (16 bytes), NOT compressed int16 (8 bytes)
+    // Validate flat key array. Rotation key stride depends on version:
+    // vanilla = float[4] (16 bytes), TBC = compressed int16[4] (8 bytes).
     size_t keySize;
     if (type == TrackType::FLOAT) keySize = sizeof(float);
     else if (type == TrackType::VEC3) keySize = sizeof(float) * 3;
-    else keySize = sizeof(float) * 4; // C4Quaternion (float[4]) in vanilla
+    else keySize = compressedQuat ? sizeof(int16_t) * 4 : sizeof(float) * 4;
     if (disk.ofsKeys + disk.nKeys * keySize > data.size()) return;
 
     // Read per-sequence ranges
@@ -551,10 +575,13 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
     std::vector<float> allFloatKeys;
     std::vector<Vec3Disk> allVec3Keys;
     std::vector<C4Quaternion> allQuatKeys;
+    std::vector<CompressedQuat> allCompQuatKeys;
     if (type == TrackType::FLOAT) {
         allFloatKeys = readArray<float>(data, disk.ofsKeys, disk.nKeys);
     } else if (type == TrackType::VEC3) {
         allVec3Keys = readArray<Vec3Disk>(data, disk.ofsKeys, disk.nKeys);
+    } else if (compressedQuat) {
+        allCompQuatKeys = readArray<CompressedQuat>(data, disk.ofsKeys, disk.nKeys);
     } else {
         allQuatKeys = readArray<C4Quaternion>(data, disk.ofsKeys, disk.nKeys);
     }
@@ -588,6 +615,22 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
             for (uint32_t k = start; k < start + keyCount; k++) {
                 track.sequences[i].vec3Values.emplace_back(
                     allVec3Keys[k].x, allVec3Keys[k].y, allVec3Keys[k].z);
+            }
+        } else if (compressedQuat) {
+            // TBC: compressed int16[4] quaternion — same offset mapping as WotLK
+            track.sequences[i].quatValues.reserve(keyCount);
+            for (uint32_t k = start; k < start + keyCount; k++) {
+                const auto& cq = allCompQuatKeys[k];
+                float fx = (cq.x < 0) ? (cq.x + 32768) / 32767.0f : (cq.x - 32767) / 32767.0f;
+                float fy = (cq.y < 0) ? (cq.y + 32768) / 32767.0f : (cq.y - 32767) / 32767.0f;
+                float fz = (cq.z < 0) ? (cq.z + 32768) / 32767.0f : (cq.z - 32767) / 32767.0f;
+                float fw = (cq.w < 0) ? (cq.w + 32768) / 32767.0f : (cq.w - 32767) / 32767.0f;
+                // M2 on-disk: (x,y,z,w), GLM quat constructor: (w,x,y,z)
+                glm::quat q(fw, fx, fy, fz);
+                float len = glm::length(q);
+                if (len > 0.001f) q = q / len;
+                else q = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                track.sequences[i].quatValues.push_back(q);
             }
         } else {
             // Vanilla: C4Quaternion — full float[4] per key (XYZW on disk)
@@ -803,6 +846,15 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     model.version = header.version;
     model.globalFlags = header.globalFlags;
 
+    // M2 binary layout splits three ways, not two. TBC (v260-263) shares the
+    // extended header / 68-byte sequences / 48-byte attachments / 504-byte
+    // particle emitters with vanilla, but introduced the boneNameCRC field
+    // (112-byte bones vs vanilla's 108), compressed int16[4] rotation
+    // quaternions (vs vanilla's float[4]), and 48-byte embedded skin submeshes
+    // (vs vanilla's 32). Treating TBC as plain vanilla misaligns every bone
+    // after the first, producing garbage pivots — the "vertex explosion" bug.
+    const bool isTBC = (header.version >= 260 && header.version < 264);
+
     // Bounding box
     model.boundMin = glm::vec3(header.boundingBox[0], header.boundingBox[1], header.boundingBox[2]);
     model.boundMax = glm::vec3(header.boundingBox[3], header.boundingBox[4], header.boundingBox[5]);
@@ -890,7 +942,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     // Read bones with full animation track data
     if (header.nBones > 0 && header.ofsBones > 0) {
         header.nBones = capCount(header.nBones, kMaxM2Bones, "nBones");
-        size_t boneStructSize = (header.version < 264) ? sizeof(M2BoneDiskVanilla) : sizeof(M2BoneDisk);
+        size_t boneStructSize = (header.version >= 264) ? sizeof(M2BoneDisk)
+                              : isTBC                    ? sizeof(M2BoneDiskTBC)
+                                                         : sizeof(M2BoneDiskVanilla);
         uint64_t expectedBoneSize = static_cast<uint64_t>(header.nBones) * boneStructSize;
         if (header.ofsBones + expectedBoneSize > m2Data.size()) {
             core::Logger::getInstance().warning("M2 bone data extends beyond file, loading with fallback");
@@ -921,50 +975,42 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             }
 
             M2Bone bone;
-            M2TrackDisk translation, rotation, scale;
 
-            if (header.version < 264) {
-                // Vanilla: 108-byte bone (no boneNameCRC, 28-byte tracks with ranges)
-                M2BoneDiskVanilla db = readValue<M2BoneDiskVanilla>(m2Data, boneOffset);
-                bone.keyBoneId = db.keyBoneId;
-                bone.flags = db.flags;
-                bone.parentBone = db.parentBone;
-                bone.submeshId = db.submeshId;
-                bone.pivot = glm::vec3(db.pivot[0], db.pivot[1], db.pivot[2]);
-                // Convert vanilla 28-byte tracks to WotLK 20-byte format (drop ranges)
-                translation = {db.translation.interpolationType, db.translation.globalSequence,
-                               db.translation.nTimestamps, db.translation.ofsTimestamps,
-                               db.translation.nKeys, db.translation.ofsKeys};
-                rotation = {db.rotation.interpolationType, db.rotation.globalSequence,
-                            db.rotation.nTimestamps, db.rotation.ofsTimestamps,
-                            db.rotation.nKeys, db.rotation.ofsKeys};
-                scale = {db.scale.interpolationType, db.scale.globalSequence,
-                         db.scale.nTimestamps, db.scale.ofsTimestamps,
-                         db.scale.nKeys, db.scale.ofsKeys};
-            } else {
-                // WotLK: 88-byte bone
+            if (header.version >= 264) {
+                // WotLK: 88-byte bone, array-of-arrays tracks, compressed quats
                 M2BoneDisk db = readValue<M2BoneDisk>(m2Data, boneOffset);
                 bone.keyBoneId = db.keyBoneId;
                 bone.flags = db.flags;
                 bone.parentBone = db.parentBone;
                 bone.submeshId = db.submeshId;
                 bone.pivot = glm::vec3(db.pivot[0], db.pivot[1], db.pivot[2]);
-                translation = db.translation;
-                rotation = db.rotation;
-                scale = db.scale;
-            }
-
-            // Parse animation tracks
-            if (header.version >= 264) {
-                parseAnimTrack(m2Data, translation, bone.translation, TrackType::VEC3, seqFlags);
-                parseAnimTrack(m2Data, rotation, bone.rotation, TrackType::QUAT_COMPRESSED, seqFlags);
-                parseAnimTrack(m2Data, scale, bone.scale, TrackType::VEC3, seqFlags);
+                parseAnimTrack(m2Data, db.translation, bone.translation, TrackType::VEC3, seqFlags);
+                parseAnimTrack(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED, seqFlags);
+                parseAnimTrack(m2Data, db.scale, bone.scale, TrackType::VEC3, seqFlags);
+            } else if (isTBC) {
+                // TBC: 112-byte bone (boneNameCRC), flat tracks with ranges,
+                // compressed int16[4] rotation quaternions.
+                M2BoneDiskTBC db = readValue<M2BoneDiskTBC>(m2Data, boneOffset);
+                bone.keyBoneId = db.keyBoneId;
+                bone.flags = db.flags;
+                bone.parentBone = db.parentBone;
+                bone.submeshId = db.submeshId;
+                bone.pivot = glm::vec3(db.pivot[0], db.pivot[1], db.pivot[2]);
+                parseAnimTrackVanilla(m2Data, db.translation, bone.translation, TrackType::VEC3);
+                parseAnimTrackVanilla(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED, /*compressedQuat=*/true);
+                parseAnimTrackVanilla(m2Data, db.scale, bone.scale, TrackType::VEC3);
             } else {
-                // Vanilla: flat array format with per-sequence ranges + Quaternion16
-                M2BoneDiskVanilla dbv = readValue<M2BoneDiskVanilla>(m2Data, boneOffset);
-                parseAnimTrackVanilla(m2Data, dbv.translation, bone.translation, TrackType::VEC3);
-                parseAnimTrackVanilla(m2Data, dbv.rotation, bone.rotation, TrackType::QUAT_COMPRESSED);
-                parseAnimTrackVanilla(m2Data, dbv.scale, bone.scale, TrackType::VEC3);
+                // Vanilla: 108-byte bone (no boneNameCRC), flat tracks with
+                // ranges, full float[4] rotation quaternions.
+                M2BoneDiskVanilla db = readValue<M2BoneDiskVanilla>(m2Data, boneOffset);
+                bone.keyBoneId = db.keyBoneId;
+                bone.flags = db.flags;
+                bone.parentBone = db.parentBone;
+                bone.submeshId = db.submeshId;
+                bone.pivot = glm::vec3(db.pivot[0], db.pivot[1], db.pivot[2]);
+                parseAnimTrackVanilla(m2Data, db.translation, bone.translation, TrackType::VEC3);
+                parseAnimTrackVanilla(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED);
+                parseAnimTrackVanilla(m2Data, db.scale, bone.scale, TrackType::VEC3);
             }
 
             if (bone.translation.hasData() || bone.rotation.hasData() || bone.scale.hasData()) {
@@ -1082,7 +1128,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             } else {
                 M2TextureTransformDiskVanilla dt = readValue<M2TextureTransformDiskVanilla>(m2Data, ofs);
                 parseAnimTrackVanilla(m2Data, dt.translation, tt.translation, TrackType::VEC3);
-                parseAnimTrackVanilla(m2Data, dt.rotation, tt.rotation, TrackType::QUAT_COMPRESSED);
+                parseAnimTrackVanilla(m2Data, dt.rotation, tt.rotation, TrackType::QUAT_COMPRESSED, /*compressedQuat=*/isTBC);
                 parseAnimTrackVanilla(m2Data, dt.scaling, tt.scale, TrackType::VEC3);
             }
             model.textureTransforms.push_back(std::move(tt));
@@ -1510,28 +1556,36 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             }
         }
 
-        // Read submeshes (vanilla: 32 bytes each, no sortCenter/sortRadius)
+        // Read submeshes. Stride differs by version: vanilla (v256) = 32 bytes
+        // (no sortCenter/sortRadius), TBC (v260-263) = 48 bytes (full M2SkinSubmesh,
+        // same as WotLK's external .skin). Wrong stride scrambles the submesh→batch
+        // vertex/index ranges.
         std::vector<M2SkinSubmesh> submeshes;
         if (skinProfile.nSubmeshes > 0 && skinProfile.ofsSubmeshes > 0) {
-            auto vanillaSubmeshes = readArray<M2SkinSubmeshVanilla>(m2Data,
-                skinProfile.ofsSubmeshes, skinProfile.nSubmeshes);
-            submeshes.reserve(vanillaSubmeshes.size());
-            for (const auto& vs : vanillaSubmeshes) {
-                M2SkinSubmesh sm;
-                sm.id = vs.id;
-                sm.level = vs.level;
-                sm.vertexStart = vs.vertexStart;
-                sm.vertexCount = vs.vertexCount;
-                sm.indexStart = vs.indexStart;
-                sm.indexCount = vs.indexCount;
-                sm.boneCount = vs.boneCount;
-                sm.boneStart = vs.boneStart;
-                sm.boneInfluences = vs.boneInfluences;
-                sm.centerBoneIndex = vs.centerBoneIndex;
-                std::memcpy(sm.centerPosition, vs.centerPosition, 12);
-                std::memset(sm.sortCenterPosition, 0, 12);
-                sm.sortRadius = 0;
-                submeshes.push_back(sm);
+            if (isTBC) {
+                submeshes = readArray<M2SkinSubmesh>(m2Data,
+                    skinProfile.ofsSubmeshes, skinProfile.nSubmeshes);
+            } else {
+                auto vanillaSubmeshes = readArray<M2SkinSubmeshVanilla>(m2Data,
+                    skinProfile.ofsSubmeshes, skinProfile.nSubmeshes);
+                submeshes.reserve(vanillaSubmeshes.size());
+                for (const auto& vs : vanillaSubmeshes) {
+                    M2SkinSubmesh sm;
+                    sm.id = vs.id;
+                    sm.level = vs.level;
+                    sm.vertexStart = vs.vertexStart;
+                    sm.vertexCount = vs.vertexCount;
+                    sm.indexStart = vs.indexStart;
+                    sm.indexCount = vs.indexCount;
+                    sm.boneCount = vs.boneCount;
+                    sm.boneStart = vs.boneStart;
+                    sm.boneInfluences = vs.boneInfluences;
+                    sm.centerBoneIndex = vs.centerBoneIndex;
+                    std::memcpy(sm.centerPosition, vs.centerPosition, 12);
+                    std::memset(sm.sortCenterPosition, 0, 12);
+                    sm.sortRadius = 0;
+                    submeshes.push_back(sm);
+                }
             }
         }
 
