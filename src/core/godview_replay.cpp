@@ -23,6 +23,9 @@ namespace core {
 
 namespace {
 
+constexpr uint64_t kReplayMountGuidStart = 0xF000000000000000ull;
+constexpr float kReplayMountRiderZOffset = 1.35f;
+
 uint32_t makeAppearanceBytes(uint8_t skin, uint8_t face, uint8_t hair, uint8_t hairColor) {
     return static_cast<uint32_t>(skin) |
            (static_cast<uint32_t>(face) << 8) |
@@ -69,6 +72,24 @@ bool shouldRenderPlayerAsDisplayModel(uint32_t displayId,
     if (nativeDisplayId != 0 && displayId == nativeDisplayId) return false;
     if (!appearance) return true;
     return !isPlayableRace(appearance->raceId);
+}
+
+uint32_t replayPlayerAnimation(const GodviewRecording::Player& player,
+                               bool moving,
+                               bool mounted,
+                               rendering::CharacterRenderer& characterRenderer,
+                               uint32_t instanceId) {
+    if (mounted && characterRenderer.hasAnimation(instanceId, rendering::anim::MOUNT)) {
+        return rendering::anim::MOUNT;
+    }
+
+    uint32_t anim = moving ? rendering::anim::RUN
+                           : (player.combat ? rendering::anim::READY_UNARMED
+                                            : rendering::anim::STAND);
+    if (!characterRenderer.hasAnimation(instanceId, anim)) {
+        anim = moving ? rendering::anim::RUN : rendering::anim::STAND;
+    }
+    return anim;
 }
 
 void buildDisplayEquipmentArrays(const EntitySpawner::HumanoidDisplayAppearance& appearance,
@@ -203,10 +224,16 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     activePlayerGuids_.clear();
     activeCreatureGuids_.clear();
     lastMoving_.clear();
+    lastPlayerMounted_.clear();
     lastCreatureMoving_.clear();
+    lastMountMoving_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
     displayOverridePlayerDisplayIds_.clear();
+    replayMountGuids_.clear();
+    replayMountDisplayIds_.clear();
+    replayMountSpawnQueued_.clear();
+    nextReplayMountGuid_ = kReplayMountGuidStart;
 
     if (!recording_.load(path, error)) {
         return false;
@@ -252,10 +279,16 @@ void GodviewReplay::start() {
     activePlayerGuids_.clear();
     activeCreatureGuids_.clear();
     lastMoving_.clear();
+    lastPlayerMounted_.clear();
     lastCreatureMoving_.clear();
+    lastMountMoving_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
     displayOverridePlayerDisplayIds_.clear();
+    replayMountGuids_.clear();
+    replayMountDisplayIds_.clear();
+    replayMountSpawnQueued_.clear();
+    nextReplayMountGuid_ = kReplayMountGuidStart;
 }
 
 void GodviewReplay::setCurrentMs(double value) {
@@ -264,6 +297,67 @@ void GodviewReplay::setCurrentMs(double value) {
         return;
     }
     currentMs_ = std::clamp(value, static_cast<double>(startMs_), static_cast<double>(endMs_));
+}
+
+uint64_t GodviewReplay::replayMountGuidForPlayer(uint64_t playerGuid) {
+    auto it = replayMountGuids_.find(playerGuid);
+    if (it != replayMountGuids_.end()) return it->second;
+
+    uint64_t mountGuid = nextReplayMountGuid_++;
+    replayMountGuids_[playerGuid] = mountGuid;
+    return mountGuid;
+}
+
+void GodviewReplay::despawnReplayMount(EntitySpawner& entitySpawner, uint64_t playerGuid) {
+    auto guidIt = replayMountGuids_.find(playerGuid);
+    if (guidIt != replayMountGuids_.end()) {
+        entitySpawner.despawnCreature(guidIt->second);
+        lastMountMoving_.erase(guidIt->second);
+    }
+    replayMountDisplayIds_.erase(playerGuid);
+    replayMountSpawnQueued_.erase(playerGuid);
+    lastPlayerMounted_.erase(playerGuid);
+}
+
+void GodviewReplay::syncReplayMountForPlayer(EntitySpawner& entitySpawner,
+                                             const Player& player,
+                                             const glm::vec3& canonicalPosition,
+                                             float canonicalYaw) {
+    if (player.mountDisplayId == 0) {
+        despawnReplayMount(entitySpawner, player.guid);
+        return;
+    }
+
+    const uint64_t mountGuid = replayMountGuidForPlayer(player.guid);
+    auto displayIt = replayMountDisplayIds_.find(player.guid);
+    const bool firstMountSample = displayIt == replayMountDisplayIds_.end();
+    const bool displayChanged = !firstMountSample && displayIt->second != player.mountDisplayId;
+    if (displayChanged) {
+        entitySpawner.despawnCreature(mountGuid);
+        lastMountMoving_.erase(mountGuid);
+        replayMountSpawnQueued_.erase(player.guid);
+    }
+
+    replayMountDisplayIds_[player.guid] = player.mountDisplayId;
+    if (firstMountSample || displayChanged) {
+        LOG_INFO("Replay player mount: ", player.name.empty() ? "Player" : player.name,
+                 " mountDisplayId=", player.mountDisplayId,
+                 " playerGuid=", player.rawGuid.empty() ? std::to_string(player.guid) : player.rawGuid,
+                 " mountGuid=0x", std::hex, mountGuid, std::dec);
+    }
+
+    const bool spawnQueued = replayMountSpawnQueued_.count(player.guid) > 0;
+    if (!spawnQueued &&
+        !entitySpawner.isCreatureSpawned(mountGuid) &&
+        !entitySpawner.isCreaturePending(mountGuid)) {
+        entitySpawner.queueCreatureSpawn(mountGuid,
+                                         player.mountDisplayId,
+                                         canonicalPosition.x,
+                                         canonicalPosition.y,
+                                         canonicalPosition.z,
+                                         canonicalYaw);
+        replayMountSpawnQueued_.insert(player.guid);
+    }
 }
 
 void GodviewReplay::setCameraFollowEnabled(bool enabled) {
@@ -477,6 +571,7 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_MAXHEALTH, std::max<uint32_t>(1, player.maxHp));
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_LEVEL, player.level);
         setTargetFields(*entity, player.targetGuid);
+        syncReplayMountForPlayer(entitySpawner, player, canonical, canonicalYaw);
 
         if (useDisplayModel) {
             if (entitySpawner.isPlayerSpawned(player.guid)) {
@@ -638,7 +733,9 @@ void GodviewReplay::despawnMissingPlayers(game::GameHandler& gameHandler,
         }
         gameHandler.getEntityManager().removeEntity(guid);
         lastMoving_.erase(guid);
+        lastPlayerMounted_.erase(guid);
         lastPlayerEquipmentHash_.erase(guid);
+        despawnReplayMount(entitySpawner, guid);
     }
 }
 
@@ -684,30 +781,57 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
     auto players = recording_.samplePlayers(currentMs_, mapId_);
     for (const auto& sampled : players) {
         const Player& player = sampled.player;
+        const bool displayOverride = displayOverridePlayerGuids_.count(player.guid) > 0;
+        const bool mounted = player.mountDisplayId != 0 &&
+            replayMountDisplayIds_.count(player.guid) > 0 &&
+            !displayOverride;
         uint32_t instanceId = entitySpawner.getPlayerInstanceId(player.guid);
-        if (instanceId == 0 && displayOverridePlayerGuids_.count(player.guid) > 0) {
+        if (instanceId == 0 && displayOverride) {
             instanceId = entitySpawner.getCreatureInstanceId(player.guid);
         }
         if (instanceId == 0) continue;
 
         glm::vec3 canonical = coords::serverToCanonical(glm::vec3(player.x, player.y, player.z));
         glm::vec3 renderPos = coords::canonicalToRender(canonical);
+        if (mounted) {
+            renderPos.z += kReplayMountRiderZOffset;
+        }
         float renderYaw = coords::serverToCanonicalYaw(player.orientation) + glm::radians(90.0f);
         charRenderer->setInstancePosition(instanceId, renderPos);
         charRenderer->setInstanceRotation(instanceId, glm::vec3(0.0f, 0.0f, renderYaw));
 
         const bool moving = sampled.moving;
         auto lastIt = lastMoving_.find(player.guid);
-        bool stateChanged = (lastIt == lastMoving_.end() || lastIt->second != moving);
+        auto lastMountedIt = lastPlayerMounted_.find(player.guid);
+        bool stateChanged = (lastIt == lastMoving_.end() || lastIt->second != moving) ||
+                            (lastMountedIt == lastPlayerMounted_.end() || lastMountedIt->second != mounted);
         if (stateChanged) {
-            uint32_t anim = moving ? rendering::anim::RUN
-                                   : (player.combat ? rendering::anim::READY_UNARMED
-                                                    : rendering::anim::STAND);
-            if (!charRenderer->hasAnimation(instanceId, anim)) {
-                anim = moving ? rendering::anim::RUN : rendering::anim::STAND;
-            }
+            uint32_t anim = replayPlayerAnimation(player, moving, mounted, *charRenderer, instanceId);
             charRenderer->playAnimation(instanceId, anim, true);
             lastMoving_[player.guid] = moving;
+            lastPlayerMounted_[player.guid] = mounted;
+        }
+
+        auto mountGuidIt = replayMountGuids_.find(player.guid);
+        if (player.mountDisplayId != 0 && mountGuidIt != replayMountGuids_.end()) {
+            uint32_t mountInstanceId = entitySpawner.getCreatureInstanceId(mountGuidIt->second);
+            if (mountInstanceId != 0) {
+                glm::vec3 mountRenderPos = coords::canonicalToRender(canonical);
+                charRenderer->setInstancePosition(mountInstanceId, mountRenderPos);
+                charRenderer->setInstanceRotation(mountInstanceId, glm::vec3(0.0f, 0.0f, renderYaw));
+
+                auto lastMountIt = lastMountMoving_.find(mountGuidIt->second);
+                bool mountStateChanged =
+                    lastMountIt == lastMountMoving_.end() || lastMountIt->second != moving;
+                if (mountStateChanged) {
+                    uint32_t mountAnim = moving ? rendering::anim::RUN : rendering::anim::STAND;
+                    if (!charRenderer->hasAnimation(mountInstanceId, mountAnim)) {
+                        mountAnim = rendering::anim::STAND;
+                    }
+                    charRenderer->playAnimation(mountInstanceId, mountAnim, true);
+                    lastMountMoving_[mountGuidIt->second] = moving;
+                }
+            }
         }
     }
 

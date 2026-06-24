@@ -82,6 +82,12 @@ private:
     void despawnMissingCreatures(game::GameHandler& gameHandler,
                                  EntitySpawner& entitySpawner,
                                  const std::unordered_set<uint64_t>& activeGuids);
+    uint64_t replayMountGuidForPlayer(uint64_t playerGuid);
+    void syncReplayMountForPlayer(EntitySpawner& entitySpawner,
+                                  const Player& player,
+                                  const glm::vec3& canonicalPosition,
+                                  float canonicalYaw);
+    void despawnReplayMount(EntitySpawner& entitySpawner, uint64_t playerGuid);
     void setCurrentMs(double value);
     void focusNextPlayer(int direction);
     std::string focusedPlayerName() const;
@@ -99,10 +105,16 @@ private:
     std::unordered_set<uint64_t> activePlayerGuids_;
     std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;
+    std::unordered_map<uint64_t, bool> lastPlayerMounted_;
     std::unordered_map<uint64_t, bool> lastCreatureMoving_;
+    std::unordered_map<uint64_t, bool> lastMountMoving_;
     std::unordered_map<uint64_t, size_t> lastPlayerEquipmentHash_;
     std::unordered_set<uint64_t> displayOverridePlayerGuids_;
     std::unordered_map<uint64_t, uint32_t> displayOverridePlayerDisplayIds_;
+    std::unordered_map<uint64_t, uint64_t> replayMountGuids_;
+    std::unordered_map<uint64_t, uint32_t> replayMountDisplayIds_;
+    std::unordered_set<uint64_t> replayMountSpawnQueued_;
+    uint64_t nextReplayMountGuid_ = 0xF000000000000000ull;
 };
 
 } // namespace core

@@ -188,8 +188,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   render as their recorded server model while keeping player labels and target
   state. Humanoid display IDs still feed race, gender, skin, hair, and equipment
   appearance.
-- Sets player mount display fields for UI/state fidelity. Full rider-on-mount
-  composition still needs a dedicated mount attachment path.
+- Spawns recorded `mount_display_id` values as replay-owned display models under
+  mounted players and offsets the rider into a mounted pose. Full skeleton
+  attachment and mount-seat placement still need a dedicated renderer path.
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
@@ -257,6 +258,8 @@ overlay can also be toggled interactively with `H`.
 Set `WOWEE_REPLAY_FOCUS_PLAYER=first` or a recorded player name/guid to start with
 the observer camera following that player. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` when comparing captures across replay changes.
+Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
+or widen the follow camera for detail-oriented screenshot smokes.
 
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.
