@@ -211,8 +211,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   that should land on action without hardcoding a timestamp.
 - Can seek screenshot smokes to the first target-or-combat snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=1`, the first target snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, or the first combat snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, when no explicit screenshot timestamp
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, the first combat snapshot with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, or the first death snapshot with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=death`, when no explicit screenshot timestamp
   is set.
 - When the focused player has a recorded target that is also present in the
   sampled frame, the follow camera frames the player-target midpoint and backs
@@ -264,7 +265,9 @@ frames to wait before capture when no timestamp is supplied; it defaults to
 Set `WOWEE_REPLAY_SCREENSHOT_EVENT=1` to seek the replay to the first
 target-or-combat snapshot before scheduling a screenshot. Use
 `WOWEE_REPLAY_SCREENSHOT_EVENT=target` for the first target-bearing snapshot, or
-`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot.
+`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot, or
+`WOWEE_REPLAY_SCREENSHOT_EVENT=death` for the first player or creature death
+snapshot.
 This is useful for recordings where the interesting action time changes between
 captures. An explicit `WOWEE_REPLAY_SCREENSHOT_MS` takes precedence when both are
 set.
@@ -274,11 +277,12 @@ Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
 clean captures while keeping replay nameplates and target cues visible. The replay
 overlay can also be toggled interactively with `H`.
 
-Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, or a
+Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, `death`, or a
 recorded player name/guid to start with the observer camera following that
 player. `event` selects a player involved in the current target-or-combat sample;
 `target` selects a player involved in the current target-bearing sample; `combat`
-selects a player involved in the current combat sample. This is useful with
+selects a player involved in the current combat sample; `death` selects a dead
+player or the nearest player to a dead creature. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten

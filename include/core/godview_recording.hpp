@@ -16,6 +16,7 @@ public:
         TargetOrCombat,
         Target,
         Combat,
+        Death,
     };
 
     struct Equipment {

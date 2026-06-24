@@ -28,7 +28,7 @@ std::filesystem::path writeContractRecording() {
         R"JSON({"t":1700000002000,"ms":2000,"map":0,"instance":0,"players":[{"guid":50,"name":"Alpha","level":11,"race":1,"class":1,"gender":1,"x":20.0,"y":10.0,"z":5.0,"o":1.5707964,"hp":50,"maxhp":100,"target":0,"combat":true}]}
 {"t":1700000001000,"ms":1000,"map":0,"instance":0,"players":[{"guid":50,"name":"Alpha","level":10,"race":1,"class":1,"x":10.0,"y":0.0,"z":0.0,"o":0.0,"hp":100,"maxhp":100,"target":"0x33","combat":false}]}
 {"t":1700000001000,"ms":1000,"map":1,"instance":0,"players":[{"guid":"cow:1","name":"Othermap","level":8,"race":2,"class":7,"gender":1,"x":100.0,"y":200.0,"z":30.0,"o":3.0,"hp":80,"maxhp":80,"target":0,"combat":false}]}
-{"t":1700000002000,"ms":2000,"map":1,"instance":0,"players":[{"guid":"cow:1","name":"Othermap","level":8,"race":2,"class":7,"gender":1,"x":110.0,"y":210.0,"z":30.0,"o":3.4,"hp":80,"maxhp":80,"target":0,"combat":false}]}
+{"t":1700000002000,"ms":2000,"map":1,"instance":0,"players":[{"guid":"cow:1","name":"Othermap","level":8,"race":2,"class":7,"gender":1,"x":110.0,"y":210.0,"z":30.0,"o":3.4,"hp":80,"maxhp":80,"target":0,"combat":false}],"creatures":[{"guid":900,"entry":2955,"name":"Dead Plainstrider","level":6,"x":111.0,"y":211.0,"z":30.0,"o":0.0,"hp":0,"maxhp":60,"target":0,"combat":false,"dead":true}]}
 )JSON");
 }
 
@@ -130,6 +130,14 @@ TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[g
     auto prevTargetMap0 = recording.findEventMs(2000.0, 0, GodviewRecording::EventKind::Target, -1);
     REQUIRE(prevTargetMap0);
     REQUIRE(*prevTargetMap0 == 1000);
+
+    auto firstDeathMap1 = recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Death, 1);
+    REQUIRE(firstDeathMap1);
+    REQUIRE(*firstDeathMap1 == 2000);
+    REQUIRE_FALSE(recording.findEventMs(999.0, 0, GodviewRecording::EventKind::Death, 1));
+    auto prevDeathMap1 = recording.findEventMs(2500.0, 1, GodviewRecording::EventKind::Death, -1);
+    REQUIRE(prevDeathMap1);
+    REQUIRE(*prevDeathMap1 == 2000);
 
     auto prevMap0 = recording.findTargetOrCombatEventMs(2000.0, 0, -1);
     REQUIRE(prevMap0);

@@ -17,6 +17,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 
 namespace wowee {
 namespace core {
@@ -447,6 +448,9 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
     if (loweredQuery == "combat") {
         return focusEventPlayer(GodviewRecording::EventKind::Combat);
     }
+    if (loweredQuery == "death" || loweredQuery == "dead") {
+        return focusEventPlayer(GodviewRecording::EventKind::Death);
+    }
 
     for (bool allowSubstring : {false, true}) {
         for (const auto& snapshot : recording_.snapshots()) {
@@ -481,6 +485,43 @@ bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
                  " (", reason, ")");
         return true;
     };
+
+    if (kind == GodviewRecording::EventKind::Death) {
+        for (const auto& sampled : players) {
+            if (sampled.player.hp == 0) {
+                return setFocusedPlayer(sampled.player, "event death");
+            }
+        }
+
+        auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
+        for (const auto& creature : creatures) {
+            if (!creature.creature.dead && creature.creature.hp != 0) continue;
+
+            const Player* nearestPlayer = nullptr;
+            float nearestDistSq = std::numeric_limits<float>::max();
+            for (const auto& sampled : players) {
+                if (creature.creature.targetGuid &&
+                    sampled.player.guid == *creature.creature.targetGuid) {
+                    return setFocusedPlayer(sampled.player, "event death target");
+                }
+
+                const float dx = sampled.player.x - creature.creature.x;
+                const float dy = sampled.player.y - creature.creature.y;
+                const float dz = sampled.player.z - creature.creature.z;
+                const float distSq = dx * dx + dy * dy + dz * dz;
+                if (distSq < nearestDistSq) {
+                    nearestDistSq = distSq;
+                    nearestPlayer = &sampled.player;
+                }
+            }
+
+            if (nearestPlayer) {
+                return setFocusedPlayer(*nearestPlayer, "event death nearest");
+            }
+        }
+
+        return false;
+    }
 
     if (kind != GodviewRecording::EventKind::Target) {
         for (const auto& sampled : players) {
@@ -534,6 +575,8 @@ bool GodviewReplay::seekEvent(GodviewRecording::EventKind kind,
         eventName = "combat";
     } else if (kind == GodviewRecording::EventKind::Target) {
         eventName = "target";
+    } else if (kind == GodviewRecording::EventKind::Death) {
+        eventName = "death";
     }
     LOG_INFO("Replay ", eventName, " event: +", currentMs_ - static_cast<double>(startMs_), "ms");
     return true;
