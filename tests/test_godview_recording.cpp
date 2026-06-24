@@ -171,6 +171,83 @@ TEST_CASE("GodviewRecording loads v2 raw GUID equipment and creatures", "[godvie
     REQUIRE(creatures[0].moving == true);
 }
 
+TEST_CASE("GodviewRecording switches discrete avatar fields at interpolation midpoint", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_discrete_fields",
+        R"JSON({"t":1700000000000,"schema":2,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"gender":0,"display_id":51,"native_display_id":51,"mount_display_id":0,"x":0.0,"y":0.0,"z":40.0,"o":0.0,"hp":100,"maxhp":100,"target":0,"target_raw":0,"combat":false,"equipment":[{"slot":15,"item_id":36,"display_id":111,"inventory_type":13,"class":2,"subclass":7}]}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"rank":0,"type":1,"display_id":390,"native_display_id":390,"x":0.0,"y":10.0,"z":40.0,"o":0.0,"hp":60,"maxhp":60,"target":0,"target_raw":0,"combat":false,"dead":false}]}
+{"t":1700000001000,"schema":2,"ms":2000,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":5,"race":4,"class":11,"gender":1,"display_id":892,"native_display_id":892,"mount_display_id":11012,"x":10.0,"y":0.0,"z":40.0,"o":3.1415926,"hp":80,"maxhp":120,"target":0,"target_raw":0,"combat":true,"equipment":[{"slot":15,"item_id":37,"display_id":222,"inventory_type":17,"class":2,"subclass":8}]}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2956,"name":"Changed Plainstrider","level":7,"rank":1,"type":2,"display_id":391,"native_display_id":391,"x":10.0,"y":10.0,"z":40.0,"o":1.5707963,"hp":30,"maxhp":70,"target":50,"target_raw":"0x10000000032","combat":true,"dead":true}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto playersBefore = recording.samplePlayers(1499.0, 1);
+    REQUIRE(playersBefore.size() == 1);
+    REQUIRE(playersBefore[0].player.x == Catch::Approx(4.99f));
+    REQUIRE(playersBefore[0].player.level == 4);
+    REQUIRE(playersBefore[0].player.race == 2);
+    REQUIRE(playersBefore[0].player.playerClass == 7);
+    REQUIRE(playersBefore[0].player.gender == 0);
+    REQUIRE(playersBefore[0].player.displayId == 51);
+    REQUIRE(playersBefore[0].player.nativeDisplayId == 51);
+    REQUIRE(playersBefore[0].player.mountDisplayId == 0);
+    REQUIRE(playersBefore[0].player.maxHp == 100);
+    REQUIRE(playersBefore[0].player.combat == false);
+    REQUIRE(playersBefore[0].player.equipment.size() == 1);
+    REQUIRE(playersBefore[0].player.equipment[0].displayId == 111);
+    REQUIRE(playersBefore[0].player.equipment[0].inventoryType == 13);
+
+    auto playersAfter = recording.samplePlayers(1501.0, 1);
+    REQUIRE(playersAfter.size() == 1);
+    REQUIRE(playersAfter[0].player.x == Catch::Approx(5.01f));
+    REQUIRE(playersAfter[0].player.hp == 90);
+    REQUIRE(playersAfter[0].player.level == 5);
+    REQUIRE(playersAfter[0].player.race == 4);
+    REQUIRE(playersAfter[0].player.playerClass == 11);
+    REQUIRE(playersAfter[0].player.gender == 1);
+    REQUIRE(playersAfter[0].player.displayId == 892);
+    REQUIRE(playersAfter[0].player.nativeDisplayId == 892);
+    REQUIRE(playersAfter[0].player.mountDisplayId == 11012);
+    REQUIRE(playersAfter[0].player.maxHp == 120);
+    REQUIRE(playersAfter[0].player.combat == true);
+    REQUIRE(playersAfter[0].player.equipment.size() == 1);
+    REQUIRE(playersAfter[0].player.equipment[0].displayId == 222);
+    REQUIRE(playersAfter[0].player.equipment[0].inventoryType == 17);
+
+    auto creaturesBefore = recording.sampleCreatures(1499.0, 1);
+    REQUIRE(creaturesBefore.size() == 1);
+    REQUIRE(creaturesBefore[0].creature.x == Catch::Approx(4.99f));
+    REQUIRE(creaturesBefore[0].creature.entry == 2955);
+    REQUIRE(creaturesBefore[0].creature.name == "Plainstrider");
+    REQUIRE(creaturesBefore[0].creature.level == 6);
+    REQUIRE(creaturesBefore[0].creature.rank == 0);
+    REQUIRE(creaturesBefore[0].creature.type == 1);
+    REQUIRE(creaturesBefore[0].creature.displayId == 390);
+    REQUIRE(creaturesBefore[0].creature.nativeDisplayId == 390);
+    REQUIRE(creaturesBefore[0].creature.maxHp == 60);
+    REQUIRE(creaturesBefore[0].creature.combat == false);
+    REQUIRE(creaturesBefore[0].creature.dead == false);
+
+    auto creaturesAfter = recording.sampleCreatures(1501.0, 1);
+    REQUIRE(creaturesAfter.size() == 1);
+    REQUIRE(creaturesAfter[0].creature.x == Catch::Approx(5.01f));
+    REQUIRE(creaturesAfter[0].creature.hp == 45);
+    REQUIRE(creaturesAfter[0].creature.entry == 2956);
+    REQUIRE(creaturesAfter[0].creature.name == "Changed Plainstrider");
+    REQUIRE(creaturesAfter[0].creature.level == 7);
+    REQUIRE(creaturesAfter[0].creature.rank == 1);
+    REQUIRE(creaturesAfter[0].creature.type == 2);
+    REQUIRE(creaturesAfter[0].creature.displayId == 391);
+    REQUIRE(creaturesAfter[0].creature.nativeDisplayId == 391);
+    REQUIRE(creaturesAfter[0].creature.maxHp == 70);
+    REQUIRE(creaturesAfter[0].creature.combat == true);
+    REQUIRE(creaturesAfter[0].creature.dead == true);
+    REQUIRE(creaturesAfter[0].creature.targetGuid);
+    REQUIRE(*creaturesAfter[0].creature.targetGuid == 0x10000000032ull);
+}
+
 TEST_CASE("GodviewRecording reports malformed JSONL with line number", "[godview][recording]") {
     auto path = writeTempRecording(
         "godview_bad",
