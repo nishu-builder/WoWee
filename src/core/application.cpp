@@ -2490,13 +2490,21 @@ bool Application::startReplayMode() {
     gameHandler->setPlayerGuid(0);
     gameHandler->enterOfflineReplayWorld();
 
+    const char* replayScreenshotPathEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH");
+    const bool replayScreenshotRequested = replayScreenshotPathEnv && *replayScreenshotPathEnv;
+    const char* replayScreenshotMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS");
+    const bool replayScreenshotHasTargetMs = replayScreenshotMsEnv && *replayScreenshotMsEnv;
+    const bool replayScreenshotEventRequested =
+        replayScreenshotRequested && !replayScreenshotHasTargetMs &&
+        envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EVENT", false);
+
     replay_->start();
     replayCameraFollowPosition_.reset();
     replayCameraFollowGuid_ = 0;
     replayCameraFollowTargetGuid_ = 0;
-    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false)) {
+    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false) || replayScreenshotEventRequested) {
         if (!replay_->seekTargetOrCombatEvent(1, true)) {
-            LOG_WARNING("Replay start event requested, but no target/combat snapshot was found");
+            LOG_WARNING("Replay target/combat event requested, but no target/combat snapshot was found");
         }
     }
     if (const char* focusPlayer = std::getenv("WOWEE_REPLAY_FOCUS_PLAYER")) {
@@ -2524,32 +2532,28 @@ bool Application::startReplayMode() {
     replayScreenshotTargetMs_ = -1.0;
     replayScreenshotFramesRemaining_ = -1;
     replayScreenshotExitAfterCapture_ = false;
-    if (const char* screenshotPath = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH")) {
-        if (*screenshotPath) {
-            replayScreenshotPath_ = screenshotPath;
-            replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
-            if (const char* screenshotMs = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS")) {
-                if (*screenshotMs) {
-                    char* end = nullptr;
-                    double ms = std::strtod(screenshotMs, &end);
-                    if (end != screenshotMs && ms >= 0.0) {
-                        double startMs = static_cast<double>(replay_->startMs());
-                        double endMs = static_cast<double>(replay_->endMs());
-                        double targetMs = (ms >= startMs && ms <= endMs)
-                            ? ms
-                            : startMs + ms;
-                        replayScreenshotTargetMs_ = std::clamp(targetMs, startMs, endMs);
-                        LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
-                                 " at replay +",
-                                 (replayScreenshotTargetMs_ - startMs), "ms");
-                    }
-                }
-            }
-            if (replayScreenshotTargetMs_ < 0.0) {
-                replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+    if (replayScreenshotRequested) {
+        replayScreenshotPath_ = replayScreenshotPathEnv;
+        replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
+        if (replayScreenshotHasTargetMs) {
+            char* end = nullptr;
+            double ms = std::strtod(replayScreenshotMsEnv, &end);
+            if (end != replayScreenshotMsEnv && ms >= 0.0) {
+                double startMs = static_cast<double>(replay_->startMs());
+                double endMs = static_cast<double>(replay_->endMs());
+                double targetMs = (ms >= startMs && ms <= endMs)
+                    ? ms
+                    : startMs + ms;
+                replayScreenshotTargetMs_ = std::clamp(targetMs, startMs, endMs);
                 LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
-                         " in ", replayScreenshotFramesRemaining_, " frame(s)");
+                         " at replay +",
+                         (replayScreenshotTargetMs_ - startMs), "ms");
             }
+        }
+        if (replayScreenshotTargetMs_ < 0.0) {
+            replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+            LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                     " in ", replayScreenshotFramesRemaining_, " frame(s)");
         }
     }
 
