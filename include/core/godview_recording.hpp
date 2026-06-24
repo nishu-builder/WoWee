@@ -112,6 +112,9 @@ public:
     const Player* firstPlayer() const;
     const Player* firstPlayerForMap(uint32_t mapId) const;
     SnapshotPair findSnapshotPair(double currentMs, std::optional<uint32_t> mapId = std::nullopt) const;
+    std::optional<uint64_t> findTargetOrCombatEventMs(double currentMs,
+                                                      std::optional<uint32_t> mapId,
+                                                      int direction) const;
     std::vector<InterpolatedPlayer> samplePlayers(double currentMs,
                                                   std::optional<uint32_t> mapId = std::nullopt) const;
     std::vector<InterpolatedCreature> sampleCreatures(double currentMs,

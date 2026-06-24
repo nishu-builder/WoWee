@@ -322,6 +322,24 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
     return false;
 }
 
+bool GodviewReplay::seekTargetOrCombatEvent(int direction, bool includeCurrent) {
+    if (recording_.empty()) return false;
+
+    direction = direction < 0 ? -1 : 1;
+    double queryMs = currentMs_;
+    if (includeCurrent) {
+        queryMs += direction > 0 ? -1.0 : 1.0;
+    }
+
+    auto eventMs = recording_.findTargetOrCombatEventMs(queryMs, mapId_, direction);
+    if (!eventMs) return false;
+
+    setCurrentMs(static_cast<double>(*eventMs));
+    paused_ = true;
+    LOG_INFO("Replay target/combat event: +", currentMs_ - static_cast<double>(startMs_), "ms");
+    return true;
+}
+
 std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget() const {
     if (!cameraFollowEnabled_) return std::nullopt;
 
@@ -689,6 +707,12 @@ void GodviewReplay::handleKeyDown(const SDL_KeyboardEvent& event) {
             setCurrentMs(currentMs_ + ((event.keysym.mod & KMOD_SHIFT) ? 30000.0 : 5000.0));
             paused_ = true;
             break;
+        case SDL_SCANCODE_COMMA:
+            seekTargetOrCombatEvent(-1);
+            break;
+        case SDL_SCANCODE_PERIOD:
+            seekTargetOrCombatEvent(1);
+            break;
         case SDL_SCANCODE_HOME:
             setCurrentMs(static_cast<double>(startMs_));
             paused_ = true;
@@ -755,6 +779,14 @@ void GodviewReplay::renderOverlay() {
     if (ImGui::Button(">|")) {
         setCurrentMs(static_cast<double>(endMs_));
         paused_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("< Event")) {
+        seekTargetOrCombatEvent(-1);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Event >")) {
+        seekTargetOrCombatEvent(1);
     }
 
     const float durationSeconds = static_cast<float>(

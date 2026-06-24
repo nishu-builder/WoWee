@@ -103,6 +103,29 @@ TEST_CASE("GodviewRecording interpolates only within the selected map", "[godvie
     REQUIRE(recording.snapshots()[pair.next].map == 1);
 }
 
+TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[godview][recording]") {
+    auto path = writeContractRecording();
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+
+    auto firstMap0 = recording.findTargetOrCombatEventMs(999.0, 0, 1);
+    REQUIRE(firstMap0);
+    REQUIRE(*firstMap0 == 1000);
+
+    auto nextMap0 = recording.findTargetOrCombatEventMs(1000.0, 0, 1);
+    REQUIRE(nextMap0);
+    REQUIRE(*nextMap0 == 2000);
+
+    auto prevMap0 = recording.findTargetOrCombatEventMs(2000.0, 0, -1);
+    REQUIRE(prevMap0);
+    REQUIRE(*prevMap0 == 1000);
+
+    REQUIRE_FALSE(recording.findTargetOrCombatEventMs(2000.0, 0, 1));
+    REQUIRE_FALSE(recording.findTargetOrCombatEventMs(999.0, 1, 1));
+}
+
 TEST_CASE("GodviewRecording loads v2 raw GUID equipment and creatures", "[godview][recording]") {
     auto path = writeTempRecording(
         "godview_v2",

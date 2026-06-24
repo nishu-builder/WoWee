@@ -177,6 +177,16 @@ float lerpAngle(float a, float b, float t) {
     return coords::normalizeAngleRad(a + delta * t);
 }
 
+bool hasTargetOrCombatEvent(const GodviewRecording::Snapshot& snapshot) {
+    for (const auto& player : snapshot.players) {
+        if (player.combat || player.targetGuid) return true;
+    }
+    for (const auto& creature : snapshot.creatures) {
+        if (creature.combat || creature.targetGuid) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 bool GodviewRecording::load(const std::string& path, std::string& error) {
@@ -448,6 +458,43 @@ GodviewRecording::SnapshotPair GodviewRecording::findSnapshotPair(double current
         pair.alpha = std::clamp(pair.alpha, 0.0f, 1.0f);
     }
     return pair;
+}
+
+std::optional<uint64_t> GodviewRecording::findTargetOrCombatEventMs(double currentMs,
+                                                                    std::optional<uint32_t> mapId,
+                                                                    int direction) const {
+    if (snapshots_.empty()) return std::nullopt;
+
+    std::vector<size_t> allIndices;
+    const std::vector<size_t>* indices = nullptr;
+    if (mapId) {
+        auto it = snapshotIndicesByMap_.find(*mapId);
+        if (it == snapshotIndicesByMap_.end() || it->second.empty()) return std::nullopt;
+        indices = &it->second;
+    } else {
+        allIndices.reserve(snapshots_.size());
+        for (size_t i = 0; i < snapshots_.size(); ++i) {
+            allIndices.push_back(i);
+        }
+        indices = &allIndices;
+    }
+
+    constexpr double kSameSnapshotSlackMs = 0.5;
+    if (direction < 0) {
+        for (auto it = indices->rbegin(); it != indices->rend(); ++it) {
+            const Snapshot& snapshot = snapshots_[*it];
+            if (static_cast<double>(snapshot.ms) >= currentMs - kSameSnapshotSlackMs) continue;
+            if (hasTargetOrCombatEvent(snapshot)) return snapshot.ms;
+        }
+    } else {
+        for (size_t index : *indices) {
+            const Snapshot& snapshot = snapshots_[index];
+            if (static_cast<double>(snapshot.ms) <= currentMs + kSameSnapshotSlackMs) continue;
+            if (hasTargetOrCombatEvent(snapshot)) return snapshot.ms;
+        }
+    }
+
+    return std::nullopt;
 }
 
 std::vector<GodviewRecording::InterpolatedPlayer> GodviewRecording::samplePlayers(

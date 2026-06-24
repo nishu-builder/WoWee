@@ -57,6 +57,7 @@ public:
 
     const Player* firstPlayer() const;
     bool focusPlayerByQuery(const std::string& query);
+    bool seekTargetOrCombatEvent(int direction, bool includeCurrent = false);
     std::optional<CameraFocusTarget> cameraFocusTarget() const;
 
     void start();
