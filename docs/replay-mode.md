@@ -155,6 +155,7 @@ behavior remains behind the existing non-replay path.
 - Left/Right: scrub 5 seconds; hold Shift for 30 seconds.
 - Home/End: jump to recording start/end.
 - `[` / `]`: decrease/increase replay speed.
+- `H`: hide/show the compact replay overlay.
 - Overlay: play/pause buttons, start/end buttons, time slider, and speed slider.
 - Camera: WoWee free-fly observer controls, with WoW movement speed disabled.
 - UI: offline replay keeps nameplates, minimap markers, chat bubbles, and the
@@ -221,6 +222,11 @@ inside the recording's absolute `ms` range are treated as absolute server
 milliseconds. `WOWEE_REPLAY_SCREENSHOT_FRAMES` still controls how many rendered
 frames to wait before capture when no timestamp is supplied; it defaults to
 `120`.
+
+Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
+`WOWEE_REPLAY_CLEAN_CAPTURE=1` to hide the replay overlay plus minimap chrome for
+clean captures while keeping replay nameplates and target cues visible. The replay
+overlay can also be toggled interactively with `H`.
 
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.

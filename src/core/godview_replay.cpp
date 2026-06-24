@@ -531,13 +531,16 @@ void GodviewReplay::handleKeyDown(const SDL_KeyboardEvent& event) {
         case SDL_SCANCODE_RIGHTBRACKET:
             speed_ = std::min(16.0f, speed_ * 2.0f);
             break;
+        case SDL_SCANCODE_H:
+            overlayVisible_ = !overlayVisible_;
+            break;
         default:
             break;
     }
 }
 
 void GodviewReplay::renderOverlay() {
-    if (recording_.empty()) return;
+    if (recording_.empty() || !overlayVisible_) return;
 
     ImGui::SetNextWindowBgAlpha(0.78f);
     ImGui::SetNextWindowPos(ImVec2(14.0f, 14.0f), ImGuiCond_FirstUseEver);

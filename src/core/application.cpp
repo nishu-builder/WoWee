@@ -2405,6 +2405,14 @@ bool Application::startReplayMode() {
     gameHandler->enterOfflineReplayWorld();
 
     replay_->start();
+    const bool cleanReplayCapture = envFlagEnabled("WOWEE_REPLAY_CLEAN_CAPTURE", false);
+    replay_->setOverlayVisible(!cleanReplayCapture &&
+                               !envFlagEnabled("WOWEE_REPLAY_HIDE_OVERLAY", false));
+    if (cleanReplayCapture) {
+        if (auto* minimap = renderer->getMinimap()) {
+            minimap->setEnabled(false);
+        }
+    }
     replay_->update(0.0f, *gameHandler, *entitySpawner_, *renderer);
     entitySpawner_->update();
     replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);

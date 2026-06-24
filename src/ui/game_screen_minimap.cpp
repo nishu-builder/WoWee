@@ -108,7 +108,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     auto* camera = renderer ? renderer->getCamera() : nullptr;
     auto* minimap = renderer ? renderer->getMinimap() : nullptr;
     auto* window = services_.window;
-    if (!camera || !minimap || !window) return;
+    if (!camera || !minimap || !minimap->isEnabled() || !window) return;
 
     float screenW = static_cast<float>(window->getWidth());
 

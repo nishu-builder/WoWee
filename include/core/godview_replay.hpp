@@ -36,6 +36,8 @@ public:
     double currentMs() const { return currentMs_; }
     float speed() const { return speed_; }
     bool paused() const { return paused_; }
+    bool overlayVisible() const { return overlayVisible_; }
+    void setOverlayVisible(bool visible) { overlayVisible_ = visible; }
     size_t snapshotCount() const { return recording_.snapshotCountForMap(mapId_); }
     uint32_t mapId() const { return mapId_; }
 
@@ -72,6 +74,7 @@ private:
     double currentMs_ = 0.0;
     float speed_ = 1.0f;
     bool paused_ = false;
+    bool overlayVisible_ = true;
     std::unordered_set<uint64_t> activePlayerGuids_;
     std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;
