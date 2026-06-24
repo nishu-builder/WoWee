@@ -890,6 +890,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const glm::vec3 camPos   = camera->getPosition();
     const uint64_t  playerGuid = gameHandler.getPlayerGuid();
     const uint64_t  targetGuid = gameHandler.getTargetGuid();
+    const bool offlineReplay = gameHandler.isOfflineReplayWorld();
 
     // Build set of creature entries that are kill objectives in active (incomplete) quests.
     std::unordered_set<uint32_t> questKillEntries;
@@ -925,7 +926,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isTarget = (guid == targetGuid);
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
-        if (isPlayer && !settingsPanel_.showFriendlyNameplates_) continue;
+        if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer && !showNameplates_) continue;
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
@@ -944,7 +945,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Cull distance: target or other players up to 40 units; NPC others up to 20 units
         glm::vec3 nameDelta = renderPos - camPos;
         float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = (isTarget || isPlayer) ? 40.0f : 20.0f;
+        float cullDist = offlineReplay ? (isPlayer ? 120.0f : 70.0f)
+                                       : ((isTarget || isPlayer) ? 40.0f : 20.0f);
         if (distSq > cullDist * cullDist) continue;
 
         // Project to clip space

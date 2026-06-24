@@ -157,6 +157,9 @@ behavior remains behind the existing non-replay path.
 - `[` / `]`: decrease/increase replay speed.
 - Overlay: play/pause buttons, start/end buttons, time slider, and speed slider.
 - Camera: WoWee free-fly observer controls, with WoW movement speed disabled.
+- UI: offline replay keeps nameplates, minimap markers, chat bubbles, and the
+  compact replay overlay, but suppresses normal gameplay panels such as player
+  frames, chat dock, action bars, bags, quest windows, and spellbook windows.
 
 ## Identity, Labels, Combat, And Targets
 
@@ -174,6 +177,8 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
+- Forces offline replay nameplates on for recorded players and uses a longer
+  replay label cull distance than normal gameplay.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
 - Uses run animation while interpolated movement is nonzero, unarmed-ready while
@@ -181,6 +186,22 @@ Replay mode now uses Coworld v2 identity fields when available:
   creature snapshot is marked dead.
 
 ## Validation
+
+For automated replay visual smoke tests, set `WOWEE_REPLAY_SCREENSHOT_PATH` to
+write a one-shot Vulkan screenshot after replay mode reaches the main loop:
+
+```bash
+WOWEE_REPLAY_SCREENSHOT_PATH=/tmp/wowee-replay.png \
+WOWEE_REPLAY_SCREENSHOT_EXIT=1 \
+WOW_DATA_PATH=/path/to/extracted/classic-data \
+./build/bin/wowee --replay /path/to/godview.jsonl
+```
+
+`WOWEE_REPLAY_SCREENSHOT_FRAMES` optionally controls how many rendered frames to
+wait before capture; it defaults to `120`.
+
+The replay screenshot hook records from the active Vulkan frame before present,
+so it can be used in automated smoke tests without relying on desktop capture.
 
 Local validation completed:
 
@@ -197,6 +218,11 @@ Local validation completed:
 - Runtime log confirmed classic metadata load, replay load, Azeroth terrain
   streaming, Elwynn zone entry, human/orc model composition, free-fly camera, and
   replay main loop entry.
+- Real v2 Coworld replay smoke:
+  `WOWEE_REPLAY_SCREENSHOT_PATH=/Users/nishadsingh/repos/wow/WoWee/build/bin/wowee_replay_clean_ui.png`
+  with `WOWEE_REPLAY_SCREENSHOT_EXIT=1` wrote a nonblank 1280x720 PNG from
+  `godview_1782289866.jsonl`, loaded Kalimdor terrain, rendered 31k M2 instances,
+  and exited successfully.
 
 Realm-generated Coworld validation completed with a recorder-enabled VMaNGOS
 container from current `coworld-vanilla-wow` patches:

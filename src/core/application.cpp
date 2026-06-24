@@ -97,6 +97,17 @@ bool envFlagEnabled(const char* key, bool defaultValue = false) {
              raw[0] == 'n' || raw[0] == 'N');
 }
 
+int envIntValue(const char* key, int defaultValue) {
+    const char* raw = std::getenv(key);
+    if (!raw || !*raw) return defaultValue;
+    char* end = nullptr;
+    long value = std::strtol(raw, &end, 10);
+    if (end == raw) return defaultValue;
+    if (value < 0) return 0;
+    if (value > INT_MAX) return INT_MAX;
+    return static_cast<int>(value);
+}
+
 } // namespace
 
 Application* Application::instance = nullptr;
@@ -2213,7 +2224,26 @@ void Application::render() {
         uiManager->render(state, authHandler.get(), gameHandler.get());
     }
 
+    if (replay_ && replayScreenshotFramesRemaining_ >= 0 && !replayScreenshotPath_.empty()) {
+        if (replayScreenshotFramesRemaining_ == 0) {
+            renderer->requestFrameScreenshot(replayScreenshotPath_);
+            replayScreenshotFramesRemaining_ = -1;
+        } else {
+            --replayScreenshotFramesRemaining_;
+        }
+    }
+
     renderer->endFrame();
+
+    bool replayScreenshotOk = false;
+    std::string replayScreenshotPath;
+    if (renderer->takeFrameScreenshotResult(replayScreenshotOk, replayScreenshotPath)) {
+        LOG_INFO("Replay screenshot capture ", replayScreenshotOk ? "succeeded" : "failed",
+                 ": ", replayScreenshotPath);
+        if (replayScreenshotExitAfterCapture_ && window) {
+            window->setShouldClose(true);
+        }
+    }
 }
 
 void Application::setupUICallbacks() {
@@ -2313,6 +2343,20 @@ bool Application::startReplayMode() {
     replay_->update(0.0f, *gameHandler, *entitySpawner_, *renderer);
     entitySpawner_->update();
     replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
+
+    replayScreenshotPath_.clear();
+    replayScreenshotFramesRemaining_ = -1;
+    replayScreenshotExitAfterCapture_ = false;
+    if (const char* screenshotPath = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH")) {
+        if (*screenshotPath) {
+            replayScreenshotPath_ = screenshotPath;
+            replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+            replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
+            LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                     " in ", replayScreenshotFramesRemaining_, " frame(s)");
+        }
+    }
+
     LOG_INFO("Replay mode ready");
     return true;
 }

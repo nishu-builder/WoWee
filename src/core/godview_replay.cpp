@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 
 namespace wowee {
 namespace core {
@@ -429,6 +430,7 @@ void GodviewReplay::renderOverlay() {
 
     ImGui::SetNextWindowBgAlpha(0.78f);
     ImGui::SetNextWindowPos(ImVec2(14.0f, 14.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 0.0f), ImVec2(520.0f, 280.0f));
     ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize |
                              ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoSavedSettings;
@@ -437,17 +439,28 @@ void GodviewReplay::renderOverlay() {
         return;
     }
 
-    ImGui::TextUnformatted(recording_.path().c_str());
+    const std::string recordingName = std::filesystem::path(recording_.path()).filename().string();
+    ImGui::TextUnformatted(recordingName.empty() ? recording_.path().c_str() : recordingName.c_str());
     if (ImGui::Button(paused_ ? "Play" : "Pause")) {
         paused_ = !paused_;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Start")) {
+    if (ImGui::Button("|<")) {
         setCurrentMs(static_cast<double>(startMs_));
         paused_ = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("End")) {
+    if (ImGui::Button("<<")) {
+        setCurrentMs(currentMs_ - 5000.0);
+        paused_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(">>")) {
+        setCurrentMs(currentMs_ + 5000.0);
+        paused_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(">|")) {
         setCurrentMs(static_cast<double>(endMs_));
         paused_ = true;
     }
@@ -467,14 +480,14 @@ void GodviewReplay::renderOverlay() {
     const auto& snapshots = recording_.snapshots();
     size_t players = pair.valid ? snapshots[pair.prev].players.size() : 0;
     size_t creatures = pair.valid ? snapshots[pair.prev].creatures.size() : 0;
-    ImGui::Text("Map %u  Snapshots %zu  Players %zu  Creatures %zu",
+    ImGui::Text("Map %u  snapshots %zu  players %zu  creatures %zu",
                 mapId_,
                 recording_.snapshotCountForMap(mapId_),
                 players,
                 creatures);
-    ImGui::Text("ms %.0f / %llu", currentMs_ - static_cast<double>(startMs_),
-                static_cast<unsigned long long>(endMs_ - startMs_));
-    ImGui::TextUnformatted("Space pause, arrows scrub, brackets speed");
+    ImGui::Text("%.1fs / %.1fs",
+                static_cast<float>((currentMs_ - static_cast<double>(startMs_)) / 1000.0),
+                durationSeconds);
 
     ImGui::End();
 }

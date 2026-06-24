@@ -1032,9 +1032,49 @@ void Renderer::endFrame() {
 
     // Water now renders in the main pass (renderWorld), no separate 1x pass needed.
 
+    std::string frameScreenshotPath;
+    VkBuffer frameScreenshotStagingBuf = VK_NULL_HANDLE;
+    VmaAllocation frameScreenshotStagingAlloc = VK_NULL_HANDLE;
+    uint32_t frameScreenshotWidth = 0;
+    uint32_t frameScreenshotHeight = 0;
+    bool frameScreenshotRecorded = false;
+    if (!pendingFrameScreenshotPath_.empty()) {
+        frameScreenshotPath = std::move(pendingFrameScreenshotPath_);
+        pendingFrameScreenshotPath_.clear();
+        frameScreenshotRecorded = recordFrameScreenshotCopy(currentCmd,
+                                                            frameScreenshotStagingBuf,
+                                                            frameScreenshotStagingAlloc,
+                                                            frameScreenshotWidth,
+                                                            frameScreenshotHeight);
+    }
+
     // Submit and present
     vkCtx->endFrame(currentCmd, currentImageIndex);
     currentCmd = VK_NULL_HANDLE;
+
+    if (!frameScreenshotPath.empty()) {
+        bool ok = frameScreenshotRecorded;
+        if (ok) {
+            vkDeviceWaitIdle(vkCtx->getDevice());
+            ok = writeFrameScreenshot(frameScreenshotPath,
+                                      frameScreenshotStagingBuf,
+                                      frameScreenshotStagingAlloc,
+                                      frameScreenshotWidth,
+                                      frameScreenshotHeight);
+            frameScreenshotStagingBuf = VK_NULL_HANDLE;
+            frameScreenshotStagingAlloc = VK_NULL_HANDLE;
+        }
+
+        if (!ok && frameScreenshotStagingBuf != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(vkCtx->getAllocator(), frameScreenshotStagingBuf, frameScreenshotStagingAlloc);
+        }
+
+        frameScreenshotResultAvailable_ = true;
+        frameScreenshotResultSuccess_ = ok;
+        frameScreenshotResultPath_ = frameScreenshotPath;
+        LOG_INFO("Frame screenshot capture ", ok ? "succeeded" : "failed",
+                 ": ", frameScreenshotPath);
+    }
 }
 
 void Renderer::setCharacterFollow(uint32_t instanceId) {
@@ -1136,6 +1176,127 @@ bool Renderer::captureScreenshot(const std::string& outputPath) {
         LOG_INFO("Screenshot saved: ", outputPath);
     } else {
         LOG_WARNING("Screenshot: stbi_write_png failed for ", outputPath);
+    }
+    return ok != 0;
+}
+
+void Renderer::requestFrameScreenshot(const std::string& outputPath) {
+    pendingFrameScreenshotPath_ = outputPath;
+}
+
+bool Renderer::takeFrameScreenshotResult(bool& success, std::string& outputPath) {
+    if (!frameScreenshotResultAvailable_) return false;
+
+    success = frameScreenshotResultSuccess_;
+    outputPath = std::move(frameScreenshotResultPath_);
+    frameScreenshotResultAvailable_ = false;
+    frameScreenshotResultSuccess_ = false;
+    frameScreenshotResultPath_.clear();
+    return true;
+}
+
+bool Renderer::recordFrameScreenshotCopy(VkCommandBuffer cmd,
+                                         VkBuffer& stagingBuf,
+                                         VmaAllocation& stagingAlloc,
+                                         uint32_t& width,
+                                         uint32_t& height) {
+    if (!vkCtx || cmd == VK_NULL_HANDLE) return false;
+
+    VmaAllocator alloc = vkCtx->getAllocator();
+    VkExtent2D extent = vkCtx->getSwapchainExtent();
+    const auto& images = vkCtx->getSwapchainImages();
+
+    if (images.empty() || currentImageIndex >= images.size()) return false;
+
+    VkImage srcImage = images[currentImageIndex];
+    width = extent.width;
+    height = extent.height;
+    VkDeviceSize bufSize = static_cast<VkDeviceSize>(width) * height * 4;
+
+    VkBufferCreateInfo bufInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bufInfo.size = bufSize;
+    bufInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    VmaAllocationCreateInfo allocCI{};
+    allocCI.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+
+    if (vmaCreateBuffer(alloc, &bufInfo, &allocCI, &stagingBuf, &stagingAlloc, nullptr) != VK_SUCCESS) {
+        LOG_WARNING("Frame screenshot: failed to create staging buffer");
+        stagingBuf = VK_NULL_HANDLE;
+        stagingAlloc = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toTransfer.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    toTransfer.image = srcImage;
+    toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyImageToBuffer(cmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           stagingBuf, 1, &region);
+
+    VkImageMemoryBarrier toPresent = toTransfer;
+    toPresent.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toPresent.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toPresent);
+
+    return true;
+}
+
+bool Renderer::writeFrameScreenshot(const std::string& outputPath,
+                                    VkBuffer stagingBuf,
+                                    VmaAllocation stagingAlloc,
+                                    uint32_t width,
+                                    uint32_t height) {
+    if (!vkCtx || stagingBuf == VK_NULL_HANDLE || stagingAlloc == VK_NULL_HANDLE || width == 0 || height == 0) {
+        return false;
+    }
+
+    VmaAllocator alloc = vkCtx->getAllocator();
+    VkDeviceSize bufSize = static_cast<VkDeviceSize>(width) * height * 4;
+    vmaInvalidateAllocation(alloc, stagingAlloc, 0, bufSize);
+
+    void* mapped = nullptr;
+    if (vmaMapMemory(alloc, stagingAlloc, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        LOG_WARNING("Frame screenshot: failed to map staging buffer");
+        vmaDestroyBuffer(alloc, stagingBuf, stagingAlloc);
+        return false;
+    }
+
+    auto* pixels = static_cast<uint8_t*>(mapped);
+    for (uint32_t i = 0; i < width * height; ++i) {
+        std::swap(pixels[i * 4 + 0], pixels[i * 4 + 2]);
+    }
+
+    std::filesystem::path outPath(outputPath);
+    if (outPath.has_parent_path()) {
+        std::filesystem::create_directories(outPath.parent_path());
+    }
+
+    int ok = stbi_write_png(outputPath.c_str(),
+                            static_cast<int>(width), static_cast<int>(height),
+                            4, pixels, static_cast<int>(width * 4));
+
+    vmaUnmapMemory(alloc, stagingAlloc);
+    vmaDestroyBuffer(alloc, stagingBuf, stagingAlloc);
+
+    if (ok) {
+        LOG_INFO("Frame screenshot saved: ", outputPath);
+    } else {
+        LOG_WARNING("Frame screenshot: stbi_write_png failed for ", outputPath);
     }
     return ok != 0;
 }
