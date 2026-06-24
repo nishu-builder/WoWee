@@ -1031,7 +1031,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 float dx = sx - peerScreen.x;
                 float dy = sy - peerScreen.y;
                 float len = std::sqrt(dx * dx + dy * dy);
-                const float minSeparation = 118.0f * settingsPanel_.nameplateScale_;
+                const bool targetPair = hasRecordedTarget || isReplayTargeted;
+                const float minSeparation = (targetPair ? 168.0f : 118.0f) *
+                                            settingsPanel_.nameplateScale_;
                 if (len >= minSeparation) return;
 
                 if (len < 1.0f) {
