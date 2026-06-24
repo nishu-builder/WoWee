@@ -252,6 +252,7 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         entity->setLevel(player.level);
         entity->setHealth(player.hp);
         entity->setMaxHealth(std::max<uint32_t>(1, player.maxHp));
+        entity->setRecordedCombat(player.combat);
         const uint32_t playerDisplayId = player.displayId != 0 ? player.displayId : player.nativeDisplayId;
         const auto displayAppearance = entitySpawner.getHumanoidDisplayAppearance(playerDisplayId);
         entity->setDisplayId(playerDisplayId);
@@ -346,6 +347,7 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         entity->setDisplayId(creatureDisplayId);
         entity->setHealth(hp);
         entity->setMaxHealth(std::max<uint32_t>(1, creature.maxHp));
+        entity->setRecordedCombat(creature.combat);
         entity->setPosition(canonical.x, canonical.y, canonical.z, canonicalYaw);
 
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_DISPLAYID, creatureDisplayId);

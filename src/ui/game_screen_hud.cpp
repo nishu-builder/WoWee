@@ -941,12 +941,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isCorpse = (unit->getHealth() == 0);
         const uint64_t unitTargetGuid = getUnitTargetGuid(*entityPtr);
         const bool hasRecordedTarget = offlineReplay && unitTargetGuid != 0;
+        const bool recordedCombat = offlineReplay && unit->isRecordedCombat() && !isCorpse;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer) {
             if (offlineReplay) {
-                if (!isTarget && unitTargetGuid == 0) continue;
+                if (!isTarget && unitTargetGuid == 0 && !recordedCombat) continue;
             } else if (!showNameplates_) {
                 continue;
             }
@@ -1042,6 +1043,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         // Border: gold = selected, orange = active targeting, dark = default.
         ImU32 borderColor = IM_COL32(20, 20, 20, A(180));
+        if (recordedCombat) {
+            borderColor = IM_COL32(255, 70, 70, A(230));
+        }
         if (hasRecordedTarget) {
             borderColor = IM_COL32(255, 110, 45, A(230));
         }
@@ -1336,6 +1340,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
+        }
+        if (recordedCombat) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "combat";
         }
         if (hasRecordedTarget) {
             auto targetEntity = gameHandler.getEntityManager().getEntity(unitTargetGuid);
