@@ -916,7 +916,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
     for (const auto& [guid, entityPtr] : gameHandler.getEntityManager().getEntities()) {
-        if (!entityPtr || guid == playerGuid) continue;
+        if (!entityPtr) continue;
+        if (!offlineReplay && guid == playerGuid) continue;
 
         if (!entityPtr->isUnit()) continue;
         auto* unit = static_cast<game::Unit*>(entityPtr.get());
@@ -924,13 +925,27 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         bool isPlayer = (entityPtr->getType() == game::ObjectType::PLAYER);
         bool isTarget = (guid == targetGuid);
+        bool isCorpse = (unit->getHealth() == 0);
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
-        if (!isPlayer && !showNameplates_) continue;
+        if (!isPlayer) {
+            bool hasTarget = false;
+            const auto& fields = entityPtr->getFields();
+            auto targetLoIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_LO));
+            auto targetHiIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_HI));
+            if ((targetLoIt != fields.end() && targetLoIt->second != 0) ||
+                (targetHiIt != fields.end() && targetHiIt->second != 0)) {
+                hasTarget = true;
+            }
+            if (offlineReplay) {
+                if (!isTarget && !hasTarget) continue;
+            } else if (!showNameplates_) {
+                continue;
+            }
+        }
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
-        bool isCorpse = (unit->getHealth() == 0);
         if (isCorpse && !isTarget) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
@@ -944,8 +959,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         // Cull distance: target or other players up to 40 units; NPC others up to 20 units
         glm::vec3 nameDelta = renderPos - camPos;
-        float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = offlineReplay ? (isPlayer ? 120.0f : 70.0f)
+        float distSq = offlineReplay
+            ? (nameDelta.x * nameDelta.x + nameDelta.y * nameDelta.y)
+            : glm::dot(nameDelta, nameDelta);
+        float cullDist = offlineReplay ? (isPlayer ? 280.0f : 220.0f)
                                        : ((isTarget || isPlayer) ? 40.0f : 20.0f);
         if (distSq > cullDist * cullDist) continue;
 

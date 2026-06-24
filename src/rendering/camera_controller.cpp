@@ -1740,7 +1740,7 @@ void CameraController::update(float deltaTime) {
             }
 
             grounded = false;
-        } else {
+        } else if (!gravityDisabled_) {
             swimming = false;
 
             float movLenSq2 = glm::dot(movement, movement);
@@ -1766,6 +1766,16 @@ void CameraController::update(float deltaTime) {
             // Apply gravity
             verticalVelocity += gravity * physicsDeltaTime;
             newPos.z += verticalVelocity * physicsDeltaTime;
+        } else {
+            swimming = false;
+            grounded = false;
+            verticalVelocity = 0.0f;
+
+            float movLenSq2 = glm::dot(movement, movement);
+            if (movLenSq2 > 1e-6f) {
+                movement *= glm::inversesqrt(movLenSq2);
+                newPos += movement * speed * physicsDeltaTime;
+            }
         }
 
         // Wall sweep collision before grounding (skip when stationary).
@@ -1798,7 +1808,7 @@ void CameraController::update(float deltaTime) {
         }
 
         // Ground to terrain or WMO floor
-        {
+        if (!gravityDisabled_) {
             auto sampleGround = [&](float x, float y) -> std::optional<float> {
                 std::optional<float> terrainH;
                 std::optional<float> wmoH;
@@ -2059,6 +2069,10 @@ void CameraController::reset() {
     autoRunning = false;
     noGroundTimer_ = 0.0f;
     autoUnstuckFired_ = false;
+    introActive = false;
+    introTimer = 0.0f;
+    idleOrbit_ = false;
+    idleTimer_ = 0.0f;
 
     // Clear edge-state so movement packets can re-start cleanly after respawn.
     wasMovingForward = false;
@@ -2143,105 +2157,107 @@ void CameraController::reset() {
     const int radiiCount = 6;
     constexpr int ANGLES = 16;
     constexpr float PI = 3.14159265f;
-    for (int ri = 0; ri < radiiCount; ri++) {
-        float r = radii[ri];
-        int steps = (r <= 0.01f) ? 1 : ANGLES;
-        for (int i = 0; i < steps; i++) {
-            float a = (2.0f * PI * static_cast<float>(i)) / static_cast<float>(steps);
-            float x = defaultPosition.x + r * std::cos(a);
-            float y = defaultPosition.y + r * std::sin(a);
-            auto h = evalFloorAt(x, y, defaultPosition.z);
-            if (!h) continue;
+    if (snapDefaultSpawnToGround_) {
+        for (int ri = 0; ri < radiiCount; ri++) {
+            float r = radii[ri];
+            int steps = (r <= 0.01f) ? 1 : ANGLES;
+            for (int i = 0; i < steps; i++) {
+                float a = (2.0f * PI * static_cast<float>(i)) / static_cast<float>(steps);
+                float x = defaultPosition.x + r * std::cos(a);
+                float y = defaultPosition.y + r * std::sin(a);
+                auto h = evalFloorAt(x, y, defaultPosition.z);
+                if (!h) continue;
 
-            // Allow large downward snaps, but avoid snapping onto high roofs/odd geometry.
-            constexpr float MAX_SPAWN_SNAP_UP = 16.0f;
-            if (*h > defaultPosition.z + MAX_SPAWN_SNAP_UP) continue;
+                // Allow large downward snaps, but avoid snapping onto high roofs/odd geometry.
+                constexpr float MAX_SPAWN_SNAP_UP = 16.0f;
+                if (*h > defaultPosition.z + MAX_SPAWN_SNAP_UP) continue;
 
-            float score = r * 0.02f;
-            if (terrainManager) {
-                // Penalize steep/unstable spots.
-                int slopeSamples = 0;
-                float slopeAccum = 0.0f;
-                constexpr float off = 2.5f;
-                const float dx[4] = {off, -off, 0.0f, 0.0f};
-                const float dy[4] = {0.0f, 0.0f, off, -off};
-                for (int s = 0; s < 4; s++) {
-                    auto hn = terrainManager->getHeightAt(x + dx[s], y + dy[s]);
-                    if (!hn) continue;
-                    slopeAccum += std::abs(*hn - *h);
-                    slopeSamples++;
-                }
-                if (slopeSamples > 0) {
-                    score += (slopeAccum / static_cast<float>(slopeSamples)) * 2.0f;
-                }
-            }
-            if (waterRenderer) {
-                auto wh = waterRenderer->getWaterHeightAt(x, y);
-                if (wh && *h < *wh - 0.2f) {
-                    score += 8.0f;
-                }
-            }
-            if (wmoRenderer) {
-                const glm::vec3 from(x, y, *h + 0.20f);
-                const bool insideWMO = wmoRenderer->isInsideWMO(x, y, *h + 1.5f, nullptr);
-
-                // Prefer outdoors for default hearth-like spawn points (offline only).
-                // In online mode, trust the server position even if inside a WMO.
-                if (insideWMO && !onlineMode) {
-                    score += 120.0f;
-                }
-
-                // Reject points embedded in nearby walls by probing tiny cardinal moves.
-                int wallHits = 0;
-                constexpr float probeStep = 0.85f;
-                const glm::vec3 probes[4] = {
-                    glm::vec3(x + probeStep, y, *h + 0.20f),
-                    glm::vec3(x - probeStep, y, *h + 0.20f),
-                    glm::vec3(x, y + probeStep, *h + 0.20f),
-                    glm::vec3(x, y - probeStep, *h + 0.20f),
-                };
-                for (const auto& to : probes) {
-                    glm::vec3 adjusted;
-                    if (wmoRenderer->checkWallCollision(from, to, adjusted)) {
-                        wallHits++;
+                float score = r * 0.02f;
+                if (terrainManager) {
+                    // Penalize steep/unstable spots.
+                    int slopeSamples = 0;
+                    float slopeAccum = 0.0f;
+                    constexpr float off = 2.5f;
+                    const float dx[4] = {off, -off, 0.0f, 0.0f};
+                    const float dy[4] = {0.0f, 0.0f, off, -off};
+                    for (int s = 0; s < 4; s++) {
+                        auto hn = terrainManager->getHeightAt(x + dx[s], y + dy[s]);
+                        if (!hn) continue;
+                        slopeAccum += std::abs(*hn - *h);
+                        slopeSamples++;
+                    }
+                    if (slopeSamples > 0) {
+                        score += (slopeAccum / static_cast<float>(slopeSamples)) * 2.0f;
                     }
                 }
-                if (wallHits >= 2) {
-                    continue; // Likely wedged in geometry.
+                if (waterRenderer) {
+                    auto wh = waterRenderer->getWaterHeightAt(x, y);
+                    if (wh && *h < *wh - 0.2f) {
+                        score += 8.0f;
+                    }
                 }
-                if (wallHits == 1) {
-                    score += 30.0f;
-                }
+                if (wmoRenderer) {
+                    const glm::vec3 from(x, y, *h + 0.20f);
+                    const bool insideWMO = wmoRenderer->isInsideWMO(x, y, *h + 1.5f, nullptr);
 
-                // If the point is inside a WMO, ensure there is an easy escape path.
-                // If almost all directions are blocked, treat it as invalid spawn.
-                if (insideWMO) {
-                    int blocked = 0;
-                    constexpr int radialChecks = 12;
-                    constexpr float radialDist = 2.2f;
-                    for (int ri = 0; ri < radialChecks; ri++) {
-                        float ang = (2.0f * PI * static_cast<float>(ri)) / static_cast<float>(radialChecks);
-                        glm::vec3 to(
-                            x + std::cos(ang) * radialDist,
-                            y + std::sin(ang) * radialDist,
-                            *h + 0.20f
-                        );
+                    // Prefer outdoors for default hearth-like spawn points (offline only).
+                    // In online mode, trust the server position even if inside a WMO.
+                    if (insideWMO && !onlineMode) {
+                        score += 120.0f;
+                    }
+
+                    // Reject points embedded in nearby walls by probing tiny cardinal moves.
+                    int wallHits = 0;
+                    constexpr float probeStep = 0.85f;
+                    const glm::vec3 probes[4] = {
+                        glm::vec3(x + probeStep, y, *h + 0.20f),
+                        glm::vec3(x - probeStep, y, *h + 0.20f),
+                        glm::vec3(x, y + probeStep, *h + 0.20f),
+                        glm::vec3(x, y - probeStep, *h + 0.20f),
+                    };
+                    for (const auto& to : probes) {
                         glm::vec3 adjusted;
                         if (wmoRenderer->checkWallCollision(from, to, adjusted)) {
-                            blocked++;
+                            wallHits++;
                         }
                     }
-                    if (blocked >= 9) {
-                        continue; // Enclosed by interior/wall geometry.
+                    if (wallHits >= 2) {
+                        continue; // Likely wedged in geometry.
                     }
-                    score += static_cast<float>(blocked) * 3.0f;
-                }
-            }
+                    if (wallHits == 1) {
+                        score += 30.0f;
+                    }
 
-            if (score < bestScore) {
-                bestScore = score;
-                bestPos = glm::vec3(x, y, *h + 0.05f);
-                foundBest = true;
+                    // If the point is inside a WMO, ensure there is an easy escape path.
+                    // If almost all directions are blocked, treat it as invalid spawn.
+                    if (insideWMO) {
+                        int blocked = 0;
+                        constexpr int radialChecks = 12;
+                        constexpr float radialDist = 2.2f;
+                        for (int ri = 0; ri < radialChecks; ri++) {
+                            float ang = (2.0f * PI * static_cast<float>(ri)) / static_cast<float>(radialChecks);
+                            glm::vec3 to(
+                                x + std::cos(ang) * radialDist,
+                                y + std::sin(ang) * radialDist,
+                                *h + 0.20f
+                            );
+                            glm::vec3 adjusted;
+                            if (wmoRenderer->checkWallCollision(from, to, adjusted)) {
+                                blocked++;
+                            }
+                        }
+                        if (blocked >= 9) {
+                            continue; // Enclosed by interior/wall geometry.
+                        }
+                        score += static_cast<float>(blocked) * 3.0f;
+                    }
+                }
+
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestPos = glm::vec3(x, y, *h + 0.05f);
+                    foundBest = true;
+                }
             }
         }
     }

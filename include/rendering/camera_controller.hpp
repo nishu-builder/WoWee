@@ -43,6 +43,7 @@ public:
         defaultYaw = yawDeg;
         defaultPitch = pitchDeg;
     }
+    void setSnapDefaultSpawnToGround(bool enabled) { snapDefaultSpawnToGround_ = enabled; }
 
     void reset();
     void resetAngles();
@@ -362,6 +363,7 @@ private:
 
     // Online mode: trust server position, don't prefer outdoors over WMO floors
     bool onlineMode = false;
+    bool snapDefaultSpawnToGround_ = true;
 
     // Default spawn position (Goldshire Inn)
     glm::vec3 defaultPosition = glm::vec3(-9464.0f, 62.0f, 200.0f);

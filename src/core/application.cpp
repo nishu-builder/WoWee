@@ -68,6 +68,7 @@
 #include <optional>
 #include <sstream>
 #include <set>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 
@@ -106,6 +107,52 @@ int envIntValue(const char* key, int defaultValue) {
     if (value < 0) return 0;
     if (value > INT_MAX) return INT_MAX;
     return static_cast<int>(value);
+}
+
+struct ReplayObserverPose {
+    glm::vec3 position{0.0f};
+    float yawDeg = 90.0f;
+    float pitchDeg = -60.0f;
+};
+
+ReplayObserverPose makeReplayObserverPose(const GodviewReplay::Snapshot& snapshot,
+                                           const GodviewReplay::Player& fallbackPlayer) {
+    glm::vec3 minPos(std::numeric_limits<float>::max());
+    glm::vec3 maxPos(std::numeric_limits<float>::lowest());
+    bool hasPoint = false;
+
+    auto addPoint = [&](float x, float y, float z) {
+        glm::vec3 canonical = coords::serverToCanonical(glm::vec3(x, y, z));
+        glm::vec3 render = coords::canonicalToRender(canonical);
+        minPos = glm::min(minPos, render);
+        maxPos = glm::max(maxPos, render);
+        hasPoint = true;
+    };
+
+    for (const auto& player : snapshot.players) {
+        addPoint(player.x, player.y, player.z);
+    }
+    for (const auto& creature : snapshot.creatures) {
+        addPoint(creature.x, creature.y, creature.z);
+    }
+    if (!hasPoint) {
+        addPoint(fallbackPlayer.x, fallbackPlayer.y, fallbackPlayer.z);
+    }
+
+    glm::vec3 center = (minPos + maxPos) * 0.5f;
+    glm::vec2 span(maxPos.x - minPos.x, maxPos.y - minPos.y);
+    float radius = std::max(8.0f, glm::length(span) * 0.5f);
+    float distance = std::clamp(radius * 0.25f + 45.0f, 55.0f, 120.0f);
+    float height = std::clamp(radius + 110.0f, 110.0f, 260.0f);
+
+    ReplayObserverPose pose;
+    pose.position = glm::vec3(center.x, center.y - distance, maxPos.z + height);
+    pose.yawDeg = 90.0f;
+    pose.pitchDeg = std::clamp(
+        glm::degrees(std::atan2((center.z + 2.0f) - pose.position.z, distance)),
+        -82.0f,
+        -58.0f);
+    return pose;
 }
 
 } // namespace
@@ -1405,7 +1452,7 @@ void Application::update(float deltaTime) {
                     renderer->getCameraController()->setRunBackSpeedOverride(gameHandler->getServerRunBackSpeed());
                     renderer->getCameraController()->setTurnRateOverride(gameHandler->getServerTurnRate());
                     renderer->getCameraController()->setMovementRooted(gameHandler->isPlayerRooted());
-                    renderer->getCameraController()->setGravityDisabled(gameHandler->isGravityDisabled());
+                    renderer->getCameraController()->setGravityDisabled(replay_ || gameHandler->isGravityDisabled());
                     renderer->getCameraController()->setFeatherFallActive(gameHandler->isFeatherFalling());
                     renderer->getCameraController()->setWaterWalkActive(gameHandler->isWaterWalking());
                     renderer->getCameraController()->setFlyingActive(gameHandler->isPlayerFlying());
@@ -2323,17 +2370,22 @@ bool Application::startReplayMode() {
     worldLoader_->loadOnlineWorldTerrain(firstSnapshot.map, firstPlayer->x, firstPlayer->y, firstPlayer->z);
 
     if (auto* cc = renderer->getCameraController()) {
-        glm::vec3 observer(firstPlayer->x, firstPlayer->y - 35.0f, firstPlayer->z + 30.0f);
+        ReplayObserverPose observer = makeReplayObserverPose(firstSnapshot, *firstPlayer);
         cc->setFollowTarget(nullptr);
         cc->setOnlineMode(false);
+        cc->setSnapDefaultSpawnToGround(false);
         cc->setUseWoWSpeed(false);
-        cc->setMovementSpeed(80.0f);
+        cc->setGravityDisabled(true);
+        cc->setMovementSpeed(120.0f);
         cc->setMovementCallback(nullptr);
         cc->setStandUpCallback(nullptr);
         cc->setSitDownCallback(nullptr);
         cc->setAutoFollowCancelCallback(nullptr);
-        cc->setDefaultSpawn(observer, 90.0f, -35.0f);
+        cc->setDefaultSpawn(observer.position, observer.yawDeg, observer.pitchDeg);
         cc->reset();
+        LOG_INFO("Replay observer camera: pos=(", observer.position.x, ", ",
+                 observer.position.y, ", ", observer.position.z, ") yaw=",
+                 observer.yawDeg, " pitch=", observer.pitchDeg);
     }
 
     gameHandler->setPlayerGuid(0);

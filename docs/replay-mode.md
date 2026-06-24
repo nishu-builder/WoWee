@@ -177,8 +177,12 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
-- Forces offline replay nameplates on for recorded players and uses a longer
-  replay label cull distance than normal gameplay.
+- Starts replay in a high observer camera centered over the first snapshot's
+  recorded players and creatures, with gravity and default floor-snap disabled
+  so the camera stays in a true god-view position.
+- Forces offline replay nameplates on for recorded players, keeps player labels
+  visible from the high observer camera, and limits default creature labels to
+  selected or target-bearing units so dense captures remain readable.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
 - Uses run animation while interpolated movement is nonzero, unarmed-ready while
@@ -219,10 +223,11 @@ Local validation completed:
   streaming, Elwynn zone entry, human/orc model composition, free-fly camera, and
   replay main loop entry.
 - Real v2 Coworld replay smoke:
-  `WOWEE_REPLAY_SCREENSHOT_PATH=/Users/nishadsingh/repos/wow/WoWee/build/bin/wowee_replay_clean_ui.png`
+  `WOWEE_REPLAY_SCREENSHOT_PATH=/Users/nishadsingh/repos/wow/WoWee/build/bin/wowee_replay_godview_clean_labels.png`
   with `WOWEE_REPLAY_SCREENSHOT_EXIT=1` wrote a nonblank 1280x720 PNG from
-  `godview_1782289866.jsonl`, loaded Kalimdor terrain, rendered 31k M2 instances,
-  and exited successfully.
+  `godview_1782289866.jsonl`, loaded Kalimdor terrain, rendered 30k M2
+  instances, opened in a high centered observer view, kept the recorded player
+  label readable, and exited successfully.
 
 Realm-generated Coworld validation completed with a recorder-enabled VMaNGOS
 container from current `coworld-vanilla-wow` patches:
