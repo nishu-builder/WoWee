@@ -189,8 +189,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   state. Humanoid display IDs still feed race, gender, skin, hair, and equipment
   appearance.
 - Spawns recorded `mount_display_id` values as replay-owned display models under
-  mounted players and offsets the rider into a mounted pose. Full skeleton
-  attachment and mount-seat placement still need a dedicated renderer path.
+  mounted players, estimates rider height from the spawned mount model bounds,
+  and offsets the rider into a mounted pose. Full skeleton attachment still
+  needs a dedicated renderer path.
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
