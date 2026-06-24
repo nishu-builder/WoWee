@@ -297,6 +297,21 @@ or widen the follow camera for detail-oriented screenshot smokes.
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.
 
+For repeatable local smokes, `tools/replay_screenshot_smoke.py` wraps those
+environment variables, runs `wowee --replay`, and validates that the resulting
+PNG has plausible dimensions and nonblank pixel variation:
+
+```bash
+python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --event death \
+  --focus death \
+  --output build/bin/wowee_replay_death.png
+```
+
+Use `--validate-only --output <png>` to re-check an existing screenshot without
+launching WoWee.
+
 Local validation completed:
 
 - `cmake --build build --parallel "$(sysctl -n hw.logicalcpu)"` passed.

@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""
+Run a replay screenshot smoke test and validate the resulting PNG.
+
+The smoke path uses WoWee's replay screenshot environment hooks, then parses the
+PNG with only the Python standard library to catch blank or stale captures.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import struct
+import subprocess
+import sys
+import zlib
+from pathlib import Path
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+class PngError(ValueError):
+    pass
+
+
+def paeth_predictor(left: int, up: int, upper_left: int) -> int:
+    prediction = left + up - upper_left
+    pa = abs(prediction - left)
+    pb = abs(prediction - up)
+    pc = abs(prediction - upper_left)
+    if pa <= pb and pa <= pc:
+        return left
+    if pb <= pc:
+        return up
+    return upper_left
+
+
+def unfilter_scanlines(raw: bytes, width: int, height: int, bytes_per_pixel: int) -> bytes:
+    stride = width * bytes_per_pixel
+    expected = height * (stride + 1)
+    if len(raw) != expected:
+        raise PngError(f"unexpected decompressed size: got {len(raw)}, expected {expected}")
+
+    out = bytearray(height * stride)
+    source_offset = 0
+    dest_offset = 0
+    previous_row = bytes(stride)
+
+    for _row in range(height):
+        filter_type = raw[source_offset]
+        source_offset += 1
+        row = bytearray(raw[source_offset:source_offset + stride])
+        source_offset += stride
+
+        if filter_type == 0:
+            pass
+        elif filter_type == 1:
+            for i in range(stride):
+                left = row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                row[i] = (row[i] + left) & 0xFF
+        elif filter_type == 2:
+            for i in range(stride):
+                row[i] = (row[i] + previous_row[i]) & 0xFF
+        elif filter_type == 3:
+            for i in range(stride):
+                left = row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                up = previous_row[i]
+                row[i] = (row[i] + ((left + up) // 2)) & 0xFF
+        elif filter_type == 4:
+            for i in range(stride):
+                left = row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                up = previous_row[i]
+                upper_left = previous_row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                row[i] = (row[i] + paeth_predictor(left, up, upper_left)) & 0xFF
+        else:
+            raise PngError(f"unsupported PNG row filter: {filter_type}")
+
+        out[dest_offset:dest_offset + stride] = row
+        dest_offset += stride
+        previous_row = bytes(row)
+
+    return bytes(out)
+
+
+def parse_png(path: Path) -> tuple[int, int, int, bytes]:
+    data = path.read_bytes()
+    if not data.startswith(PNG_SIGNATURE):
+        raise PngError("not a PNG file")
+
+    offset = len(PNG_SIGNATURE)
+    width = height = color_type = bit_depth = interlace = None
+    idat = bytearray()
+
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        chunk_type = data[offset + 4:offset + 8]
+        offset += 8
+        chunk_data = data[offset:offset + length]
+        offset += length + 4  # skip CRC
+        if len(chunk_data) != length:
+            raise PngError("truncated PNG chunk")
+
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type, _compression, _filter, interlace = struct.unpack(
+                ">IIBBBBB", chunk_data
+            )
+        elif chunk_type == b"IDAT":
+            idat.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if width is None or height is None or color_type is None:
+        raise PngError("missing PNG IHDR")
+    if bit_depth != 8:
+        raise PngError(f"unsupported PNG bit depth: {bit_depth}")
+    if interlace != 0:
+        raise PngError("interlaced PNGs are not supported by this smoke validator")
+
+    bytes_per_pixel_by_color_type = {
+        0: 1,  # grayscale
+        2: 3,  # RGB
+        4: 2,  # grayscale + alpha
+        6: 4,  # RGBA
+    }
+    if color_type not in bytes_per_pixel_by_color_type:
+        raise PngError(f"unsupported PNG color type: {color_type}")
+
+    decompressed = zlib.decompress(bytes(idat))
+    pixels = unfilter_scanlines(
+        decompressed,
+        width,
+        height,
+        bytes_per_pixel_by_color_type[color_type],
+    )
+    return width, height, color_type, pixels
+
+
+def unique_color_count(pixels: bytes, color_type: int, minimum: int) -> int:
+    if color_type == 0:
+        step = 1
+        color_size = 1
+    elif color_type == 2:
+        step = 3
+        color_size = 3
+    elif color_type == 4:
+        step = 2
+        color_size = 1
+    elif color_type == 6:
+        step = 4
+        color_size = 3
+    else:
+        raise PngError(f"unsupported PNG color type: {color_type}")
+
+    colors: set[bytes] = set()
+    for offset in range(0, len(pixels), step):
+        colors.add(pixels[offset:offset + color_size])
+        if len(colors) >= minimum:
+            return len(colors)
+    return len(colors)
+
+
+def validate_png(path: Path, min_width: int, min_height: int, min_unique_colors: int) -> None:
+    if not path.exists():
+        raise PngError(f"screenshot was not written: {path}")
+    width, height, color_type, pixels = parse_png(path)
+    if width < min_width or height < min_height:
+        raise PngError(f"PNG too small: {width}x{height}, expected at least {min_width}x{min_height}")
+    unique_colors = unique_color_count(pixels, color_type, min_unique_colors)
+    if unique_colors < min_unique_colors:
+        raise PngError(
+            f"PNG appears blank: only {unique_colors} unique colors, expected at least {min_unique_colors}"
+        )
+    print(
+        f"OK: {path} is {width}x{height}, color_type={color_type}, "
+        f"unique_colors>={unique_colors}"
+    )
+
+
+def default_output_path(wowee: Path) -> Path:
+    return wowee.resolve().parent / "wowee_replay_smoke.png"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("replay", type=Path, nargs="?", help="Godview JSONL recording to replay.")
+    parser.add_argument("--wowee", type=Path, default=Path("build/bin/wowee"))
+    parser.add_argument("--data-path", type=Path, default=None, help="Extracted vanilla data directory.")
+    parser.add_argument("--output", type=Path, default=None, help="Screenshot path to write.")
+    parser.add_argument("--event", default="death", help="WOWEE_REPLAY_SCREENSHOT_EVENT value.")
+    parser.add_argument("--focus", default=None, help="WOWEE_REPLAY_FOCUS_PLAYER value.")
+    parser.add_argument("--frames", type=int, default=90)
+    parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument("--min-width", type=int, default=640)
+    parser.add_argument("--min-height", type=int, default=360)
+    parser.add_argument("--min-unique-colors", type=int, default=32)
+    parser.add_argument("--validate-only", action="store_true", help="Validate --output without launching WoWee.")
+    parser.add_argument("--no-clean-capture", action="store_true", help="Keep replay overlay/minimap chrome visible.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    wowee = args.wowee.resolve()
+    replay = args.replay.resolve() if args.replay else None
+    output = (args.output.resolve() if args.output else default_output_path(wowee))
+
+    if args.validate_only:
+        validate_png(output, args.min_width, args.min_height, args.min_unique_colors)
+        return 0
+
+    if not wowee.exists():
+        print(f"error: WoWee binary not found: {wowee}", file=sys.stderr)
+        return 2
+    if replay is None:
+        print("error: replay file is required unless --validate-only is set", file=sys.stderr)
+        return 2
+    if not replay.exists():
+        print(f"error: replay file not found: {replay}", file=sys.stderr)
+        return 2
+
+    data_path = args.data_path or (Path(os.environ["WOW_DATA_PATH"]) if "WOW_DATA_PATH" in os.environ else None)
+    if data_path is None:
+        print("error: pass --data-path or set WOW_DATA_PATH", file=sys.stderr)
+        return 2
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists():
+        output.unlink()
+
+    env = os.environ.copy()
+    env["WOW_DATA_PATH"] = str(data_path.resolve())
+    env["WOWEE_REPLAY_SCREENSHOT_PATH"] = str(output)
+    env["WOWEE_REPLAY_SCREENSHOT_EXIT"] = "1"
+    env["WOWEE_REPLAY_SCREENSHOT_FRAMES"] = str(args.frames)
+    if args.event:
+        env["WOWEE_REPLAY_SCREENSHOT_EVENT"] = args.event
+    focus = args.focus if args.focus is not None else args.event
+    if focus:
+        env["WOWEE_REPLAY_FOCUS_PLAYER"] = focus
+    if not args.no_clean_capture:
+        env["WOWEE_REPLAY_CLEAN_CAPTURE"] = "1"
+
+    command = [str(wowee), "--replay", str(replay)]
+    print("running:", " ".join(command))
+    result = subprocess.run(
+        command,
+        cwd=wowee.parent,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=args.timeout,
+        check=False,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0:
+        print(f"error: WoWee exited with status {result.returncode}", file=sys.stderr)
+        return result.returncode
+
+    try:
+        validate_png(output, args.min_width, args.min_height, args.min_unique_colors)
+    except PngError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
