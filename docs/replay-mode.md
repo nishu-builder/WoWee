@@ -299,7 +299,9 @@ so it can be used in automated smoke tests without relying on desktop capture.
 
 For repeatable local smokes, `tools/replay_screenshot_smoke.py` wraps those
 environment variables, runs `wowee --replay`, and validates that the resulting
-PNG has plausible dimensions and nonblank pixel variation:
+PNG has plausible dimensions and nonblank pixel variation. When `--event` is
+set, it first scans the JSONL on WoWee's active replay map and fails early if the
+recording has no matching `target`, `combat`, or `death` sample:
 
 ```bash
 python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \

@@ -9,6 +9,7 @@ PNG with only the Python standard library to catch blank or stale captures.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import struct
 import subprocess
@@ -22,6 +23,103 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 class PngError(ValueError):
     pass
+
+
+class ReplayError(ValueError):
+    pass
+
+
+def guid_is_present(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return False
+        try:
+            return int(raw, 0) != 0
+        except ValueError:
+            return True
+    return False
+
+
+def normalize_event(value: str | None) -> str | None:
+    if not value:
+        return None
+    lowered = value.strip().lower()
+    if not lowered or lowered[0] in {"0", "f", "n"}:
+        return None
+    if lowered == "target":
+        return "target"
+    if lowered == "combat":
+        return "combat"
+    if lowered in {"death", "dead"}:
+        return "death"
+    return "target-or-combat"
+
+
+def snapshot_has_event(snapshot: dict[str, object], event: str) -> bool:
+    players = snapshot.get("players")
+    if not isinstance(players, list):
+        players = []
+    creatures = snapshot.get("creatures")
+    if not isinstance(creatures, list):
+        creatures = []
+
+    if event == "death":
+        for player in players:
+            if isinstance(player, dict) and player.get("hp") == 0:
+                return True
+        for creature in creatures:
+            if isinstance(creature, dict) and (creature.get("dead") is True or creature.get("hp") == 0):
+                return True
+        return False
+
+    for entity in [*players, *creatures]:
+        if not isinstance(entity, dict):
+            continue
+        has_target = guid_is_present(entity.get("target_raw")) or guid_is_present(entity.get("target"))
+        in_combat = entity.get("combat") is True
+        if event != "target" and in_combat:
+            return True
+        if event != "combat" and has_target:
+            return True
+    return False
+
+
+def preflight_replay_event(path: Path, event: str) -> tuple[int, int]:
+    active_map: int | None = None
+    first_matching_ms: int | None = None
+
+    with path.open("r", encoding="utf-8") as file:
+        for line_number, line in enumerate(file, start=1):
+            if not line.strip():
+                continue
+            try:
+                snapshot = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ReplayError(f"JSON parse error at line {line_number}: {exc}") from exc
+            if not isinstance(snapshot, dict):
+                raise ReplayError(f"line {line_number} is not a JSON object")
+
+            players = snapshot.get("players")
+            if active_map is None and isinstance(players, list) and players:
+                active_map = int(snapshot.get("map", 0) or 0)
+            if active_map is None or int(snapshot.get("map", 0) or 0) != active_map:
+                continue
+            if snapshot_has_event(snapshot, event):
+                first_matching_ms = int(snapshot.get("ms", snapshot.get("t", 0)) or 0)
+                break
+
+    if active_map is None:
+        raise ReplayError("replay contains no player snapshots")
+    if first_matching_ms is None:
+        raise ReplayError(f"replay has no {event} event on active map {active_map}")
+    return active_map, first_matching_ms
 
 
 def paeth_predictor(left: int, up: int, upper_left: int) -> int:
@@ -196,6 +294,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-unique-colors", type=int, default=32)
     parser.add_argument("--validate-only", action="store_true", help="Validate --output without launching WoWee.")
     parser.add_argument("--no-clean-capture", action="store_true", help="Keep replay overlay/minimap chrome visible.")
+    parser.add_argument(
+        "--skip-event-preflight",
+        action="store_true",
+        help="Do not inspect the JSONL for the requested replay event before launching WoWee.",
+    )
     return parser.parse_args()
 
 
@@ -224,6 +327,15 @@ def main() -> int:
         print("error: pass --data-path or set WOW_DATA_PATH", file=sys.stderr)
         return 2
 
+    event = normalize_event(args.event)
+    if event and not args.skip_event_preflight:
+        try:
+            active_map, event_ms = preflight_replay_event(replay, event)
+        except ReplayError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"OK: replay has {event} event on active map {active_map} at ms={event_ms}")
+
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         output.unlink()
@@ -233,8 +345,8 @@ def main() -> int:
     env["WOWEE_REPLAY_SCREENSHOT_PATH"] = str(output)
     env["WOWEE_REPLAY_SCREENSHOT_EXIT"] = "1"
     env["WOWEE_REPLAY_SCREENSHOT_FRAMES"] = str(args.frames)
-    if args.event:
-        env["WOWEE_REPLAY_SCREENSHOT_EVENT"] = args.event
+    if event:
+        env["WOWEE_REPLAY_SCREENSHOT_EVENT"] = event
     focus = args.focus if args.focus is not None else args.event
     if focus:
         env["WOWEE_REPLAY_FOCUS_PLAYER"] = focus
