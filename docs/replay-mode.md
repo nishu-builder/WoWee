@@ -39,20 +39,35 @@ The replay source is the Coworld recorder documented in
 `coworld-vanilla-wow/docs/protocol/godview_recorder.md`, with the Python reader
 at `coworld-vanilla-wow/backend/vmangos/replay/godview.py`.
 
-Current v1 schema:
+WoWee supports the original v1 player-only schema and Coworld recorder v2. v2
+adds raw packed GUIDs, player display/equipment identity, and loaded nearby
+creatures:
 
 ```json
-{"t":1700000000000,"ms":532145,"map":1,"instance":0,
- "players":[{"guid":50,"name":"Drumz","level":3,"race":6,"class":7,
+{"t":1700000000000,"schema":2,"ms":532145,"map":1,"instance":0,
+ "players":[{"guid":50,"raw_guid":"0x10000000032","name":"Drumz",
+             "level":3,"race":6,"class":7,"gender":0,
+             "display_id":20582,"native_display_id":20582,"mount_display_id":0,
              "x":-3251.1,"y":-558.5,"z":34.97,"o":1.52,
-             "hp":180,"maxhp":220,"target":2955,"combat":true}]}
+             "hp":180,"maxhp":220,"target":2955,"target_raw":"0x20000000b8b",
+             "combat":true,
+             "equipment":[{"slot":15,"item_id":36,"display_id":5195,
+                           "inventory_type":13,"class":2,"subclass":7}]}],
+ "creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,
+               "name":"Plainstrider","level":6,"rank":0,"type":1,
+               "display_id":390,"native_display_id":390,
+               "x":-3310.0,"y":-570.0,"z":35.1,"o":2.4,
+               "hp":120,"maxhp":120,"target":0,"target_raw":0,
+               "combat":false,"dead":false}]}
 ```
 
 `ms` is the server monotonic clock and is used for replay ordering, interpolation,
 scrubbing, and speed control. `t` is wall-clock unix milliseconds. Real recorder
 files can contain per-map snapshots interleaved by `ms`; the current WoWee CLI
 opens the first map that has players and filters replay sampling to that map's
-own timeline.
+own timeline. When `raw_guid` / `target_raw` are present, WoWee uses them as the
+replay entity identity; v1 recordings fall back to the original `guid` / `target`
+fields.
 
 ## Coordinate Verification
 
@@ -116,12 +131,19 @@ During `AppState::IN_GAME`, replay mode follows a separate branch in
 
 - Advance replay time by `deltaTime * speed`, using the recorded `ms` clock.
 - Sample the previous and next snapshots for the active map and interpolate
-  position/orientation.
+  player and creature position/orientation.
 - Create/update `game::Player` entities with name, level, hp, maxhp, race, class,
-  target fields, and combat state.
+  display fields, target fields, and combat state.
+- Create/update `game::Unit` entities for recorded creatures with entry, name,
+  level, display ID, hp, target, combat, and dead state.
 - Queue one renderable player model per active recorded player.
-- Directly synchronize each player renderer instance from sampled replay state.
-- Despawn players absent from the current authoritative snapshot.
+- Queue recorded player equipment through WoWee's existing online equipment
+  compositor when the equipment hash changes.
+- Queue one renderable creature model per active recorded creature with a
+  display ID.
+- Directly synchronize player and creature renderer instances from sampled
+  replay state.
+- Despawn players and creatures absent from the current authoritative snapshot.
 - Keep terrain streaming enabled for the observer camera.
 
 This branch does not call the world socket or normal opcode path. Normal client
@@ -138,33 +160,25 @@ behavior remains behind the existing non-replay path.
 
 ## Identity, Labels, Combat, And Targets
 
-The current Coworld v1 stream records race/class but not gender, equipment, or
-display IDs. Replay mode therefore:
+Replay mode now uses Coworld v2 identity fields when available:
 
-- Uses race plus optional future `gender` to choose a player model, defaulting
-  to male when `gender` is absent.
-- Generates stable placeholder appearance bytes from GUID.
+- Uses race plus `gender` to choose a player model, defaulting to male for v1
+  recordings when `gender` is absent.
+- Generates stable placeholder face/hair appearance bytes from GUID until the
+  recorder emits exact character customization fields.
+- Applies recorded player equipment display IDs through WoWee's existing armor
+  and weapon compositor.
+- Sets player display and mount display fields for UI/state fidelity. Full
+  transformation or mounted rendering still needs a dedicated display-ID override
+  path in the player renderer.
+- Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
+  `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
-- Writes target low/high fields when `target` is present.
+- Writes target low/high fields from `target_raw` when present, falling back to
+  v1 `target`.
 - Uses run animation while interpolated movement is nonzero, unarmed-ready while
-  idle in combat when available, and stand otherwise.
-
-## Coworld Schema Follow-Up Note
-
-For faithful 3D avatars, the server-side recorder should be extended to emit:
-
-- `gender` per player.
-- Player equipment/display IDs, or enough inventory display info to compose the
-  same geosets and texture regions WoWee uses online.
-- Player display IDs if the server has transformations that override race/gender.
-- Creature snapshots with creature GUID, display ID, position/orientation, hp,
-  target, combat, and movement state.
-
-Until then, replay mode intentionally renders players with stable placeholders and
-does not spawn creatures.
-
-Producer-side tracking issue:
-<https://github.com/Metta-AI/coworld-vanilla-wow/issues/82>
+  idle in combat when available, stand otherwise, and death animation when a
+  creature snapshot is marked dead.
 
 ## Validation
 
@@ -172,9 +186,10 @@ Local validation completed:
 
 - `cmake --build build --parallel "$(sysctl -n hw.logicalcpu)"` passed.
 - `./build/bin/wowee --help` prints `Usage: ./build/bin/wowee [--replay <godview.jsonl>]`.
-- `./build/bin/test_godview_recording` passed 48 assertions covering JSONL
-  parsing, out-of-order server `ms` sorting, map-filtered interpolation,
-  optional future `gender`, string/hex GUID values, and malformed-line errors.
+- `./build/bin/test_godview_recording` passed 73 assertions covering JSONL
+  parsing, out-of-order server `ms` sorting, map-filtered interpolation, v1/v2
+  GUID handling, recorded equipment, creature interpolation, optional `gender`,
+  string/hex GUID values, and malformed-line errors.
 - `./build/bin/test_entity` passed 71 assertions.
 - `./build/bin/test_world_map_coordinate_projection` passed 30 assertions.
 - `./build/bin/test_opcode_table` passed 18 assertions.
