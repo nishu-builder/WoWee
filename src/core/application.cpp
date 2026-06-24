@@ -2206,6 +2206,9 @@ void Application::update(float deltaTime) {
         auto rendererUpdateStart = std::chrono::steady_clock::now();
         try {
             renderer->update(deltaTime);
+            if (replay_) {
+                applyReplayCameraFollow(deltaTime);
+            }
         } catch (const std::bad_alloc& e) {
             LOG_ERROR("OOM during Application::update stage 'renderer->update': ", e.what());
             throw;
@@ -2354,6 +2357,46 @@ void Application::setupUICallbacks() {
     transportCallbacks_->setupCallbacks();
 }
 
+void Application::applyReplayCameraFollow(float deltaTime) {
+    if (!replay_ || !renderer) return;
+
+    auto focus = replay_->cameraFocusTarget();
+    if (!focus) {
+        replayCameraFollowPosition_.reset();
+        replayCameraFollowGuid_ = 0;
+        return;
+    }
+
+    glm::vec3 pivot = focus->renderPosition + glm::vec3(0.0f, 0.0f, 2.0f);
+    constexpr float kBackDistance = 38.0f;
+    constexpr float kHeight = 48.0f;
+    glm::vec3 desired = pivot + glm::vec3(0.0f, -kBackDistance, kHeight);
+    if (!std::isfinite(desired.x) || !std::isfinite(desired.y) || !std::isfinite(desired.z)) {
+        return;
+    }
+
+    if (!replayCameraFollowPosition_ || replayCameraFollowGuid_ != focus->guid || deltaTime <= 0.0f) {
+        replayCameraFollowPosition_ = desired;
+        replayCameraFollowGuid_ = focus->guid;
+    } else {
+        float alpha = 1.0f - std::exp(-10.0f * std::max(0.0f, deltaTime));
+        replayCameraFollowPosition_ =
+            *replayCameraFollowPosition_ + (desired - *replayCameraFollowPosition_) * alpha;
+    }
+
+    glm::vec3 forward = pivot - *replayCameraFollowPosition_;
+    float horizontal = std::max(1.0f, glm::length(glm::vec2(forward.x, forward.y)));
+    float yawDeg = glm::degrees(std::atan2(forward.y, forward.x));
+    float pitchDeg = glm::clamp(glm::degrees(std::atan2(forward.z, horizontal)), -82.0f, -35.0f);
+
+    if (auto* cc = renderer->getCameraController()) {
+        cc->setFreeCameraPose(*replayCameraFollowPosition_, yawDeg, pitchDeg);
+    } else if (auto* camera = renderer->getCamera()) {
+        camera->setRotation(yawDeg, pitchDeg);
+        camera->setPosition(*replayCameraFollowPosition_);
+    }
+}
+
 bool Application::startReplayMode() {
     if (!worldLoader_ || !gameHandler || !entitySpawner_ || !renderer) {
         LOG_ERROR("Replay mode cannot start before world systems are initialized");
@@ -2405,6 +2448,17 @@ bool Application::startReplayMode() {
     gameHandler->enterOfflineReplayWorld();
 
     replay_->start();
+    replayCameraFollowPosition_.reset();
+    replayCameraFollowGuid_ = 0;
+    if (const char* focusPlayer = std::getenv("WOWEE_REPLAY_FOCUS_PLAYER")) {
+        if (*focusPlayer) {
+            if (replay_->focusPlayerByQuery(focusPlayer)) {
+                replay_->setCameraFollowEnabled(true);
+            } else {
+                LOG_WARNING("Replay focus player not found: ", focusPlayer);
+            }
+        }
+    }
     const bool cleanReplayCapture = envFlagEnabled("WOWEE_REPLAY_CLEAN_CAPTURE", false);
     replay_->setOverlayVisible(!cleanReplayCapture &&
                                !envFlagEnabled("WOWEE_REPLAY_HIDE_OVERLAY", false));
