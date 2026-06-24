@@ -212,8 +212,8 @@ Replay mode now uses Coworld v2 identity fields when available:
   sublabel when the recording contains a current target GUID.
 - Shows units targeted by a recorded player/creature even when they are not
   otherwise selected, and marks them with a compact `targeted` sublabel.
-- Offsets targeted replay NPC nameplates away from their recorded attacker when
-  the two labels would otherwise overlap.
+- Separates close replay target/source nameplates in screen space when the two
+  labels would otherwise overlap.
 - Draws a replay-only target tether with a dark silhouette, arrow head, endpoint
   reticle, and high-contrast combat color between visible target-bearing units
   and their current target so god-view captures show engagement relationships at
