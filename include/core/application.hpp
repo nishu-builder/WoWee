@@ -166,6 +166,10 @@ private:
     bool npcsSpawned = false;
     bool spawnSnapToGround = true;
     float lastFrameTime = 0.0f;
+    std::string replayScreenshotPath_;
+    double replayScreenshotTargetMs_ = -1.0;
+    int replayScreenshotFramesRemaining_ = -1;
+    bool replayScreenshotExitAfterCapture_ = false;
 
     // Player character info (for model spawning)
     game::Race playerRace_ = game::Race::HUMAN;

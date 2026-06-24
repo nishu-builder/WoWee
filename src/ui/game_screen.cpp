@@ -323,6 +323,16 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     gameHandler.chatAutoJoin.lfg = chatPanel_.chatAutoJoinLFG;
     gameHandler.chatAutoJoin.local = chatPanel_.chatAutoJoinLocal;
 
+    if (gameHandler.isOfflineReplayWorld()) {
+        renderNameplates(gameHandler);
+        if (showMinimap_) {
+            renderMinimapMarkers(gameHandler);
+        }
+        chatPanel_.renderBubbles(gameHandler);
+        ImGui::GetStyle().Alpha = prevAlpha;
+        return;
+    }
+
     // Process targeting input before UI windows
     processTargetInput(gameHandler);
 

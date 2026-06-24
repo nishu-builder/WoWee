@@ -21,8 +21,10 @@ class EntitySpawner;
 class GodviewReplay {
 public:
     using Player = GodviewRecording::Player;
+    using Creature = GodviewRecording::Creature;
     using Snapshot = GodviewRecording::Snapshot;
     using InterpolatedPlayer = GodviewRecording::InterpolatedPlayer;
+    using InterpolatedCreature = GodviewRecording::InterpolatedCreature;
 
     bool load(const std::string& path, std::string& error);
     bool empty() const { return recording_.empty(); }
@@ -34,6 +36,8 @@ public:
     double currentMs() const { return currentMs_; }
     float speed() const { return speed_; }
     bool paused() const { return paused_; }
+    bool overlayVisible() const { return overlayVisible_; }
+    void setOverlayVisible(bool visible) { overlayVisible_ = visible; }
     size_t snapshotCount() const { return recording_.snapshotCountForMap(mapId_); }
     uint32_t mapId() const { return mapId_; }
 
@@ -53,10 +57,14 @@ public:
 private:
     void applyGameState(game::GameHandler& gameHandler,
                         EntitySpawner& entitySpawner,
-                        const std::vector<InterpolatedPlayer>& players);
-    void despawnMissing(game::GameHandler& gameHandler,
-                        EntitySpawner& entitySpawner,
-                        const std::unordered_set<uint64_t>& activeGuids);
+                        const std::vector<InterpolatedPlayer>& players,
+                        const std::vector<InterpolatedCreature>& creatures);
+    void despawnMissingPlayers(game::GameHandler& gameHandler,
+                               EntitySpawner& entitySpawner,
+                               const std::unordered_set<uint64_t>& activeGuids);
+    void despawnMissingCreatures(game::GameHandler& gameHandler,
+                                 EntitySpawner& entitySpawner,
+                                 const std::unordered_set<uint64_t>& activeGuids);
     void setCurrentMs(double value);
 
     GodviewRecording recording_;
@@ -66,8 +74,12 @@ private:
     double currentMs_ = 0.0;
     float speed_ = 1.0f;
     bool paused_ = false;
-    std::unordered_set<uint64_t> activeGuids_;
+    bool overlayVisible_ = true;
+    std::unordered_set<uint64_t> activePlayerGuids_;
+    std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;
+    std::unordered_map<uint64_t, bool> lastCreatureMoving_;
+    std::unordered_map<uint64_t, size_t> lastPlayerEquipmentHash_;
 };
 
 } // namespace core

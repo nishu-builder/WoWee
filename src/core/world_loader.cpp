@@ -372,6 +372,7 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
             yawDeg = 180.0f - glm::degrees(canonicalYaw);
         }
         renderer_->getCameraController()->setOnlineMode(true);
+        renderer_->getCameraController()->setSnapDefaultSpawnToGround(true);
         renderer_->getCameraController()->setDefaultSpawn(spawnRender, yawDeg, -15.0f);
         renderer_->getCameraController()->reset();
     }

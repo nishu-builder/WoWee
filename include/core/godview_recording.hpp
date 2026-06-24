@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -11,6 +12,15 @@ namespace core {
 
 class GodviewRecording {
 public:
+    struct Equipment {
+        uint8_t slot = 0;
+        uint32_t itemId = 0;
+        uint32_t displayId = 0;
+        uint8_t inventoryType = 0;
+        uint8_t itemClass = 0;
+        uint8_t subclass = 0;
+    };
+
     struct Player {
         uint64_t guid = 0;
         std::string rawGuid;
@@ -19,6 +29,9 @@ public:
         uint8_t race = 1;
         uint8_t playerClass = 1;
         uint8_t gender = 0;
+        uint32_t displayId = 0;
+        uint32_t nativeDisplayId = 0;
+        uint32_t mountDisplayId = 0;
         float x = 0.0f;
         float y = 0.0f;
         float z = 0.0f;
@@ -27,15 +40,40 @@ public:
         uint32_t maxHp = 1;
         std::optional<uint64_t> targetGuid;
         bool combat = false;
+        std::vector<Equipment> equipment;
+    };
+
+    struct Creature {
+        uint64_t guid = 0;
+        std::string rawGuid;
+        uint32_t entry = 0;
+        std::string name;
+        uint8_t level = 1;
+        uint8_t rank = 0;
+        uint8_t type = 0;
+        uint32_t displayId = 0;
+        uint32_t nativeDisplayId = 0;
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float orientation = 0.0f;
+        uint32_t hp = 1;
+        uint32_t maxHp = 1;
+        std::optional<uint64_t> targetGuid;
+        bool combat = false;
+        bool dead = false;
     };
 
     struct Snapshot {
         uint64_t t = 0;
+        uint32_t schema = 1;
         uint64_t ms = 0;
         uint32_t map = 0;
         uint32_t instance = 0;
         std::vector<Player> players;
+        std::vector<Creature> creatures;
         std::unordered_map<uint64_t, size_t> playerByGuid;
+        std::unordered_map<uint64_t, size_t> creatureByGuid;
     };
 
     struct SnapshotPair {
@@ -47,6 +85,11 @@ public:
 
     struct InterpolatedPlayer {
         Player player;
+        bool moving = false;
+    };
+
+    struct InterpolatedCreature {
+        Creature creature;
         bool moving = false;
     };
 
@@ -63,6 +106,7 @@ public:
     uint64_t endMsForMap(uint32_t mapId) const;
     size_t snapshotCount() const { return snapshots_.size(); }
     size_t snapshotCountForMap(uint32_t mapId) const;
+    size_t creatureCountForMap(uint32_t mapId) const;
     std::vector<uint32_t> mapIds() const;
 
     const Player* firstPlayer() const;
@@ -70,6 +114,8 @@ public:
     SnapshotPair findSnapshotPair(double currentMs, std::optional<uint32_t> mapId = std::nullopt) const;
     std::vector<InterpolatedPlayer> samplePlayers(double currentMs,
                                                   std::optional<uint32_t> mapId = std::nullopt) const;
+    std::vector<InterpolatedCreature> sampleCreatures(double currentMs,
+                                                      std::optional<uint32_t> mapId = std::nullopt) const;
 
 private:
     void rebuildIndexes();

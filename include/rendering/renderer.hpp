@@ -158,6 +158,8 @@ public:
 
     // Screenshot capture — copies swapchain image to PNG file
     bool captureScreenshot(const std::string& outputPath);
+    void requestFrameScreenshot(const std::string& outputPath);
+    bool takeFrameScreenshotResult(bool& success, std::string& outputPath);
 
     // Spell visual effects (SMSG_PLAY_SPELL_VISUAL / SMSG_PLAY_SPELL_IMPACT)
     // Delegates to SpellVisualSystem (owned by Renderer)
@@ -269,6 +271,16 @@ private:
     bool msaaChangePending_ = false;
     void renderShadowPass();
     glm::mat4 computeLightSpaceMatrix();
+    bool recordFrameScreenshotCopy(VkCommandBuffer cmd,
+                                   VkBuffer& stagingBuf,
+                                   VmaAllocation& stagingAlloc,
+                                   uint32_t& width,
+                                   uint32_t& height);
+    bool writeFrameScreenshot(const std::string& outputPath,
+                              VkBuffer stagingBuf,
+                              VmaAllocation stagingAlloc,
+                              uint32_t width,
+                              uint32_t height);
 
     std::vector<pipeline::CustomZoneInfo> customZones_;
     pipeline::AssetManager* cachedAssetManager = nullptr;
@@ -301,6 +313,10 @@ private:
     VkContext* vkCtx = nullptr;
     VkCommandBuffer currentCmd = VK_NULL_HANDLE;
     uint32_t currentImageIndex = 0;
+    std::string pendingFrameScreenshotPath_;
+    bool frameScreenshotResultAvailable_ = false;
+    bool frameScreenshotResultSuccess_ = false;
+    std::string frameScreenshotResultPath_;
 
     // Per-frame UBO + descriptors (set 0)
     static constexpr uint32_t MAX_FRAMES = 2;

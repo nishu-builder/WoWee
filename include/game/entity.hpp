@@ -363,6 +363,10 @@ public:
     bool isHostile() const { return hostile; }
     void setHostile(bool h) { hostile = h; }
 
+    // Offline replay metadata. Normal network updates leave this false.
+    bool isRecordedCombat() const { return recordedCombat; }
+    void setRecordedCombat(bool v) { recordedCombat = v; }
+
 protected:
     std::string name;
     uint32_t health = 0;
@@ -380,6 +384,7 @@ protected:
     uint32_t npcEmoteState = 0;
     uint32_t factionTemplate = 0;
     bool hostile = false;
+    bool recordedCombat = false;
 };
 
 /**

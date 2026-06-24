@@ -50,6 +50,7 @@
 #include <chrono>
 #include <ctime>
 
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
@@ -96,6 +97,19 @@ namespace {
             if (!go->getName().empty()) return go->getName();
         }
         return "Unknown";
+    }
+
+    uint64_t getUnitTargetGuid(const wowee::game::Entity& entity) {
+        const auto& fields = entity.getFields();
+        auto loIt = fields.find(wowee::game::fieldIndex(wowee::game::UF::UNIT_FIELD_TARGET_LO));
+        auto hiIt = fields.find(wowee::game::fieldIndex(wowee::game::UF::UNIT_FIELD_TARGET_HI));
+        uint32_t lo = (loIt != fields.end()) ? loIt->second : 0;
+        uint32_t hi = (hiIt != fields.end()) ? hiIt->second : 0;
+        if (lo == 0 && hi == 0) {
+            return 0;
+        }
+
+        return static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
     }
 
 }
@@ -890,6 +904,20 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const glm::vec3 camPos   = camera->getPosition();
     const uint64_t  playerGuid = gameHandler.getPlayerGuid();
     const uint64_t  targetGuid = gameHandler.getTargetGuid();
+    const bool offlineReplay = gameHandler.isOfflineReplayWorld();
+    auto projectToScreen = [&](const glm::vec3& point, ImVec2& out) {
+        glm::vec4 clipPos = viewProj * glm::vec4(point, 1.0f);
+        if (clipPos.w <= 0.01f) return false;
+
+        glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
+        if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f) return false;
+
+        // The camera bakes the Vulkan Y-flip into the projection matrix, so
+        // NDC y = -1 is the top of the screen and y = 1 is the bottom.
+        out.x = (ndc.x * 0.5f + 0.5f) * screenW;
+        out.y = (ndc.y * 0.5f + 0.5f) * screenH;
+        return true;
+    };
 
     // Build set of creature entries that are kill objectives in active (incomplete) quests.
     std::unordered_set<uint32_t> questKillEntries;
@@ -913,9 +941,23 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     }
 
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    std::unordered_set<uint64_t> replayTargetedGuids;
+    std::unordered_map<uint64_t, uint64_t> replayTargetSourceGuids;
+    if (offlineReplay) {
+        for (const auto& entry : gameHandler.getEntityManager().getEntities()) {
+            const auto& entityPtr = entry.second;
+            if (!entityPtr || !entityPtr->isUnit()) continue;
+            uint64_t target = getUnitTargetGuid(*entityPtr);
+            if (target != 0) {
+                replayTargetedGuids.insert(target);
+                replayTargetSourceGuids.emplace(target, entry.first);
+            }
+        }
+    }
 
     for (const auto& [guid, entityPtr] : gameHandler.getEntityManager().getEntities()) {
-        if (!entityPtr || guid == playerGuid) continue;
+        if (!entityPtr) continue;
+        if (!offlineReplay && guid == playerGuid) continue;
 
         if (!entityPtr->isUnit()) continue;
         auto* unit = static_cast<game::Unit*>(entityPtr.get());
@@ -923,14 +965,27 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         bool isPlayer = (entityPtr->getType() == game::ObjectType::PLAYER);
         bool isTarget = (guid == targetGuid);
+        bool isCorpse = (unit->getHealth() == 0);
+        const uint64_t unitTargetGuid = getUnitTargetGuid(*entityPtr);
+        const bool hasRecordedTarget = offlineReplay && unitTargetGuid != 0;
+        auto recordedTargetEntity = hasRecordedTarget
+            ? gameHandler.getEntityManager().getEntity(unitTargetGuid)
+            : nullptr;
+        const bool recordedCombat = offlineReplay && unit->isRecordedCombat() && !isCorpse;
+        const bool isReplayTargeted = offlineReplay && replayTargetedGuids.count(guid) != 0;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
-        if (isPlayer && !settingsPanel_.showFriendlyNameplates_) continue;
-        if (!isPlayer && !showNameplates_) continue;
+        if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
+        if (!isPlayer) {
+            if (offlineReplay) {
+                if (!isTarget && unitTargetGuid == 0 && !recordedCombat && !isReplayTargeted) continue;
+            } else if (!showNameplates_) {
+                continue;
+            }
+        }
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
-        bool isCorpse = (unit->getHealth() == 0);
-        if (isCorpse && !isTarget) continue;
+        if (isCorpse && !isTarget && !isReplayTargeted) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
@@ -943,23 +998,53 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         // Cull distance: target or other players up to 40 units; NPC others up to 20 units
         glm::vec3 nameDelta = renderPos - camPos;
-        float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = (isTarget || isPlayer) ? 40.0f : 20.0f;
+        float distSq = offlineReplay
+            ? (nameDelta.x * nameDelta.x + nameDelta.y * nameDelta.y)
+            : glm::dot(nameDelta, nameDelta);
+        float cullDist = offlineReplay ? (isPlayer ? 280.0f : 220.0f)
+                                       : ((isTarget || isPlayer) ? 40.0f : 20.0f);
         if (distSq > cullDist * cullDist) continue;
 
-        // Project to clip space
-        glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
-        if (clipPos.w <= 0.01f) continue;  // Behind camera
+        ImVec2 screenPos;
+        if (!projectToScreen(renderPos, screenPos)) continue;
+        float sx = screenPos.x;
+        float sy = screenPos.y;
+        if (offlineReplay && isReplayTargeted && !isPlayer) {
+            auto sourceIt = replayTargetSourceGuids.find(guid);
+            auto sourceEntity = (sourceIt != replayTargetSourceGuids.end())
+                ? gameHandler.getEntityManager().getEntity(sourceIt->second)
+                : nullptr;
+            if (sourceEntity && sourceEntity->isUnit()) {
+                auto* sourceUnit = static_cast<game::Unit*>(sourceEntity.get());
+                glm::vec3 sourceRenderPos;
+                if (!core::Application::getInstance().getRenderPositionForGuid(sourceIt->second, sourceRenderPos)) {
+                    sourceRenderPos = core::coords::canonicalToRender(
+                        glm::vec3(sourceUnit->getX(), sourceUnit->getY(), sourceUnit->getZ()));
+                }
+                sourceRenderPos.z += 2.3f;
 
-        glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
-        if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f) continue;
-
-        // NDC → screen pixels.
-        // The camera bakes the Vulkan Y-flip into the projection matrix, so
-        // NDC y = -1 is the top of the screen and y = 1 is the bottom.
-        // Map directly: sy = (ndc.y + 1) / 2 * screenH  (no extra inversion).
-        float sx = (ndc.x * 0.5f + 0.5f) * screenW;
-        float sy = (ndc.y * 0.5f + 0.5f) * screenH;
+                ImVec2 sourceScreen;
+                if (projectToScreen(sourceRenderPos, sourceScreen)) {
+                    float dx = sx - sourceScreen.x;
+                    float dy = sy - sourceScreen.y;
+                    float len = std::sqrt(dx * dx + dy * dy);
+                    const float minSeparation = 74.0f * settingsPanel_.nameplateScale_;
+                    if (len < minSeparation) {
+                        if (len < 1.0f) {
+                            dx = 0.65f;
+                            dy = 0.76f;
+                            len = 1.0f;
+                        }
+                        float push = minSeparation - len;
+                        sx += (dx / len) * push;
+                        sy += (dy / len) * push;
+                    }
+                }
+            }
+            const float screenPad = 12.0f;
+            sx = std::clamp(sx, screenPad, screenW - screenPad);
+            sy = std::clamp(sy, screenPad, screenH - screenPad);
+        }
 
         // Fade out in the last 5 units of cull range
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
@@ -1008,26 +1093,29 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Check if this unit is targeting the local player (threat indicator)
         bool isTargetingPlayer = false;
         if (unit->isHostile() && !isCorpse) {
-            const auto& fields = entityPtr->getFields();
-            auto loIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_LO));
-            if (loIt != fields.end() && loIt->second != 0) {
-                uint64_t unitTarget = loIt->second;
-                auto hiIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_HI));
-                if (hiIt != fields.end())
-                    unitTarget |= (static_cast<uint64_t>(hiIt->second) << 32);
-                isTargetingPlayer = (unitTarget == playerGuid);
-            }
+            isTargetingPlayer = (unitTargetGuid != 0 && unitTargetGuid == playerGuid);
         }
         // Creature rank for border styling (Elite=gold double border, Boss=red, Rare=silver)
         int creatureRank = -1;
         if (!isPlayer) creatureRank = gameHandler.getCreatureRank(unit->getEntry());
 
-        // Border: gold = currently selected, orange = targeting player, dark = default
-        ImU32 borderColor = isTarget
-            ? IM_COL32(255, 215, 0,  A(255))
-            : isTargetingPlayer
-              ? IM_COL32(255, 140, 0,  A(220))   // orange = this mob is targeting you
-              : IM_COL32(20,  20,  20, A(180));
+        // Border: gold = selected, orange = active targeting, dark = default.
+        ImU32 borderColor = IM_COL32(20, 20, 20, A(180));
+        if (recordedCombat) {
+            borderColor = IM_COL32(255, 70, 70, A(230));
+        }
+        if (isReplayTargeted) {
+            borderColor = IM_COL32(120, 240, 255, A(230));
+        }
+        if (hasRecordedTarget) {
+            borderColor = IM_COL32(255, 110, 45, A(230));
+        }
+        if (isTargetingPlayer) {
+            borderColor = IM_COL32(255, 140, 0, A(220));
+        }
+        if (isTarget) {
+            borderColor = IM_COL32(255, 215, 0, A(255));
+        }
 
         // Bar geometry
         const float barW = 80.0f * settingsPanel_.nameplateScale_;
@@ -1047,6 +1135,79 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             drawList->AddRectFilled(ImVec2(barX,                 sy), ImVec2(barX + barW * healthPct,   sy + barH), barColor,   2.0f);
         }
         drawList->AddRect       (ImVec2(barX - 1.0f, sy - 1.0f), ImVec2(barX + barW + 1.0f, sy + barH + 1.0f), borderColor, 2.0f);
+
+        if (hasRecordedTarget && recordedTargetEntity && recordedTargetEntity->isUnit()) {
+            auto* targetUnit = static_cast<game::Unit*>(recordedTargetEntity.get());
+            glm::vec3 targetRenderPos;
+            if (!core::Application::getInstance().getRenderPositionForGuid(unitTargetGuid, targetRenderPos)) {
+                targetRenderPos = core::coords::canonicalToRender(
+                    glm::vec3(targetUnit->getX(), targetUnit->getY(), targetUnit->getZ()));
+            }
+            targetRenderPos.z += 1.2f;
+
+            ImVec2 targetScreen;
+            if (projectToScreen(targetRenderPos, targetScreen)) {
+                ImU32 lineColor = recordedCombat
+                    ? IM_COL32(120, 240, 255, A(245))
+                    : IM_COL32(255, 215, 95, A(225));
+                ImU32 lineShadow = IM_COL32(0, 0, 0, A(135));
+                ImVec2 lineStart(sx, sy + barH * 0.5f);
+                const float scale = settingsPanel_.nameplateScale_;
+                drawList->AddLine(lineStart, targetScreen, lineShadow, 4.0f * scale);
+                drawList->AddLine(lineStart, targetScreen, lineColor, 2.4f * scale);
+                float dx = targetScreen.x - lineStart.x;
+                float dy = targetScreen.y - lineStart.y;
+                float len = std::sqrt(dx * dx + dy * dy);
+                if (len > 8.0f * scale) {
+                    float ux = dx / len;
+                    float uy = dy / len;
+                    ImVec2 arrowBase(targetScreen.x - ux * 10.0f * scale,
+                                      targetScreen.y - uy * 10.0f * scale);
+                    ImVec2 perp(-uy * 5.0f * scale, ux * 5.0f * scale);
+                    drawList->AddTriangleFilled(
+                        targetScreen,
+                        ImVec2(arrowBase.x + perp.x, arrowBase.y + perp.y),
+                        ImVec2(arrowBase.x - perp.x, arrowBase.y - perp.y),
+                        lineShadow);
+                    ImVec2 innerBase(targetScreen.x - ux * 8.0f * scale,
+                                     targetScreen.y - uy * 8.0f * scale);
+                    ImVec2 innerPerp(-uy * 3.4f * scale, ux * 3.4f * scale);
+                    drawList->AddTriangleFilled(
+                        targetScreen,
+                        ImVec2(innerBase.x + innerPerp.x, innerBase.y + innerPerp.y),
+                        ImVec2(innerBase.x - innerPerp.x, innerBase.y - innerPerp.y),
+                        lineColor);
+                }
+                const float ringRadius = 9.0f * scale;
+                const float tickRadius = 14.0f * scale;
+                drawList->AddCircle(targetScreen, ringRadius, lineShadow, 20, 4.0f * scale);
+                drawList->AddCircle(targetScreen, ringRadius, lineColor, 20, 2.0f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
+                                  ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
+                                  lineShadow, 3.0f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
+                                  ImVec2(targetScreen.x + tickRadius, targetScreen.y),
+                                  lineShadow, 3.0f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
+                                  ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
+                                  lineShadow, 3.0f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
+                                  ImVec2(targetScreen.x, targetScreen.y + tickRadius),
+                                  lineShadow, 3.0f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
+                                  ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
+                                  lineColor, 1.6f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
+                                  ImVec2(targetScreen.x + tickRadius, targetScreen.y),
+                                  lineColor, 1.6f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
+                                  ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
+                                  lineColor, 1.6f * scale);
+                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
+                                  ImVec2(targetScreen.x, targetScreen.y + tickRadius),
+                                  lineColor, 1.6f * scale);
+            }
+        }
 
         // Elite/Boss/Rare decoration: extra outer border with rank-specific color
         if (creatureRank == 1 || creatureRank == 2) {
@@ -1313,6 +1474,22 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
+        }
+        if (recordedCombat) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "combat";
+        }
+        if (isReplayTargeted) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "targeted";
+        }
+        if (hasRecordedTarget) {
+            std::string targetName = recordedTargetEntity ? getEntityName(recordedTargetEntity) : "target";
+            if (targetName.empty() || targetName == "Unknown") {
+                targetName = "target";
+            }
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "target: " + targetName;
         }
         if (!subLabel.empty()) nameY -= 10.0f;  // shift name up for sub-label line
 

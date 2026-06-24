@@ -68,6 +68,7 @@
 #include <optional>
 #include <sstream>
 #include <set>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 
@@ -95,6 +96,63 @@ bool envFlagEnabled(const char* key, bool defaultValue = false) {
     if (!raw || !*raw) return defaultValue;
     return !(raw[0] == '0' || raw[0] == 'f' || raw[0] == 'F' ||
              raw[0] == 'n' || raw[0] == 'N');
+}
+
+int envIntValue(const char* key, int defaultValue) {
+    const char* raw = std::getenv(key);
+    if (!raw || !*raw) return defaultValue;
+    char* end = nullptr;
+    long value = std::strtol(raw, &end, 10);
+    if (end == raw) return defaultValue;
+    if (value < 0) return 0;
+    if (value > INT_MAX) return INT_MAX;
+    return static_cast<int>(value);
+}
+
+struct ReplayObserverPose {
+    glm::vec3 position{0.0f};
+    float yawDeg = 90.0f;
+    float pitchDeg = -60.0f;
+};
+
+ReplayObserverPose makeReplayObserverPose(const GodviewReplay::Snapshot& snapshot,
+                                           const GodviewReplay::Player& fallbackPlayer) {
+    glm::vec3 minPos(std::numeric_limits<float>::max());
+    glm::vec3 maxPos(std::numeric_limits<float>::lowest());
+    bool hasPoint = false;
+
+    auto addPoint = [&](float x, float y, float z) {
+        glm::vec3 canonical = coords::serverToCanonical(glm::vec3(x, y, z));
+        glm::vec3 render = coords::canonicalToRender(canonical);
+        minPos = glm::min(minPos, render);
+        maxPos = glm::max(maxPos, render);
+        hasPoint = true;
+    };
+
+    for (const auto& player : snapshot.players) {
+        addPoint(player.x, player.y, player.z);
+    }
+    for (const auto& creature : snapshot.creatures) {
+        addPoint(creature.x, creature.y, creature.z);
+    }
+    if (!hasPoint) {
+        addPoint(fallbackPlayer.x, fallbackPlayer.y, fallbackPlayer.z);
+    }
+
+    glm::vec3 center = (minPos + maxPos) * 0.5f;
+    glm::vec2 span(maxPos.x - minPos.x, maxPos.y - minPos.y);
+    float radius = std::max(8.0f, glm::length(span) * 0.5f);
+    float distance = std::clamp(radius * 0.25f + 45.0f, 55.0f, 120.0f);
+    float height = std::clamp(radius + 110.0f, 110.0f, 260.0f);
+
+    ReplayObserverPose pose;
+    pose.position = glm::vec3(center.x, center.y - distance, maxPos.z + height);
+    pose.yawDeg = 90.0f;
+    pose.pitchDeg = std::clamp(
+        glm::degrees(std::atan2((center.z + 2.0f) - pose.position.z, distance)),
+        -82.0f,
+        -58.0f);
+    return pose;
 }
 
 } // namespace
@@ -1394,7 +1452,7 @@ void Application::update(float deltaTime) {
                     renderer->getCameraController()->setRunBackSpeedOverride(gameHandler->getServerRunBackSpeed());
                     renderer->getCameraController()->setTurnRateOverride(gameHandler->getServerTurnRate());
                     renderer->getCameraController()->setMovementRooted(gameHandler->isPlayerRooted());
-                    renderer->getCameraController()->setGravityDisabled(gameHandler->isGravityDisabled());
+                    renderer->getCameraController()->setGravityDisabled(replay_ || gameHandler->isGravityDisabled());
                     renderer->getCameraController()->setFeatherFallActive(gameHandler->isFeatherFalling());
                     renderer->getCameraController()->setWaterWalkActive(gameHandler->isWaterWalking());
                     renderer->getCameraController()->setFlyingActive(gameHandler->isPlayerFlying());
@@ -2213,7 +2271,39 @@ void Application::render() {
         uiManager->render(state, authHandler.get(), gameHandler.get());
     }
 
+    if (replay_ && !replayScreenshotPath_.empty()) {
+        bool requestReplayScreenshot = false;
+        if (replayScreenshotTargetMs_ >= 0.0) {
+            if (replay_->currentMs() >= replayScreenshotTargetMs_) {
+                requestReplayScreenshot = true;
+                replayScreenshotTargetMs_ = -1.0;
+                replayScreenshotFramesRemaining_ = -1;
+            }
+        } else if (replayScreenshotFramesRemaining_ >= 0) {
+            if (replayScreenshotFramesRemaining_ == 0) {
+                requestReplayScreenshot = true;
+                replayScreenshotFramesRemaining_ = -1;
+            } else {
+                --replayScreenshotFramesRemaining_;
+            }
+        }
+
+        if (requestReplayScreenshot) {
+            renderer->requestFrameScreenshot(replayScreenshotPath_);
+        }
+    }
+
     renderer->endFrame();
+
+    bool replayScreenshotOk = false;
+    std::string replayScreenshotPath;
+    if (renderer->takeFrameScreenshotResult(replayScreenshotOk, replayScreenshotPath)) {
+        LOG_INFO("Replay screenshot capture ", replayScreenshotOk ? "succeeded" : "failed",
+                 ": ", replayScreenshotPath);
+        if (replayScreenshotExitAfterCapture_ && window) {
+            window->setShouldClose(true);
+        }
+    }
 }
 
 void Application::setupUICallbacks() {
@@ -2293,26 +2383,73 @@ bool Application::startReplayMode() {
     worldLoader_->loadOnlineWorldTerrain(firstSnapshot.map, firstPlayer->x, firstPlayer->y, firstPlayer->z);
 
     if (auto* cc = renderer->getCameraController()) {
-        glm::vec3 observer(firstPlayer->x, firstPlayer->y - 35.0f, firstPlayer->z + 30.0f);
+        ReplayObserverPose observer = makeReplayObserverPose(firstSnapshot, *firstPlayer);
         cc->setFollowTarget(nullptr);
         cc->setOnlineMode(false);
+        cc->setSnapDefaultSpawnToGround(false);
         cc->setUseWoWSpeed(false);
-        cc->setMovementSpeed(80.0f);
+        cc->setGravityDisabled(true);
+        cc->setMovementSpeed(120.0f);
         cc->setMovementCallback(nullptr);
         cc->setStandUpCallback(nullptr);
         cc->setSitDownCallback(nullptr);
         cc->setAutoFollowCancelCallback(nullptr);
-        cc->setDefaultSpawn(observer, 90.0f, -35.0f);
+        cc->setDefaultSpawn(observer.position, observer.yawDeg, observer.pitchDeg);
         cc->reset();
+        LOG_INFO("Replay observer camera: pos=(", observer.position.x, ", ",
+                 observer.position.y, ", ", observer.position.z, ") yaw=",
+                 observer.yawDeg, " pitch=", observer.pitchDeg);
     }
 
     gameHandler->setPlayerGuid(0);
     gameHandler->enterOfflineReplayWorld();
 
     replay_->start();
+    const bool cleanReplayCapture = envFlagEnabled("WOWEE_REPLAY_CLEAN_CAPTURE", false);
+    replay_->setOverlayVisible(!cleanReplayCapture &&
+                               !envFlagEnabled("WOWEE_REPLAY_HIDE_OVERLAY", false));
+    if (cleanReplayCapture) {
+        if (auto* minimap = renderer->getMinimap()) {
+            minimap->setEnabled(false);
+        }
+    }
     replay_->update(0.0f, *gameHandler, *entitySpawner_, *renderer);
     entitySpawner_->update();
     replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
+
+    replayScreenshotPath_.clear();
+    replayScreenshotTargetMs_ = -1.0;
+    replayScreenshotFramesRemaining_ = -1;
+    replayScreenshotExitAfterCapture_ = false;
+    if (const char* screenshotPath = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH")) {
+        if (*screenshotPath) {
+            replayScreenshotPath_ = screenshotPath;
+            replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
+            if (const char* screenshotMs = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS")) {
+                if (*screenshotMs) {
+                    char* end = nullptr;
+                    double ms = std::strtod(screenshotMs, &end);
+                    if (end != screenshotMs && ms >= 0.0) {
+                        double startMs = static_cast<double>(replay_->startMs());
+                        double endMs = static_cast<double>(replay_->endMs());
+                        double targetMs = (ms >= startMs && ms <= endMs)
+                            ? ms
+                            : startMs + ms;
+                        replayScreenshotTargetMs_ = std::clamp(targetMs, startMs, endMs);
+                        LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                                 " at replay +",
+                                 (replayScreenshotTargetMs_ - startMs), "ms");
+                    }
+                }
+            }
+            if (replayScreenshotTargetMs_ < 0.0) {
+                replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+                LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                         " in ", replayScreenshotFramesRemaining_, " frame(s)");
+            }
+        }
+    }
+
     LOG_INFO("Replay mode ready");
     return true;
 }

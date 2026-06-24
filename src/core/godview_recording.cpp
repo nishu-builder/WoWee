@@ -135,6 +135,39 @@ std::string readString(const Json& object, const char* key, const std::string& f
     return fallback;
 }
 
+uint64_t readEntityGuid(const Json& object) {
+    auto rawIt = object.find("raw_guid");
+    if (rawIt != object.end()) {
+        uint64_t rawGuid = guidFromJsonValue(*rawIt);
+        if (rawGuid != 0) return rawGuid;
+    }
+
+    auto guidIt = object.find("guid");
+    return guidIt != object.end() ? guidFromJsonValue(*guidIt) : 0;
+}
+
+std::string readEntityGuidString(const Json& object, uint64_t guid) {
+    auto rawIt = object.find("raw_guid");
+    if (rawIt != object.end()) return readString(object, "raw_guid", std::to_string(guid));
+    return readString(object, "guid", std::to_string(guid));
+}
+
+std::optional<uint64_t> readOptionalGuid(const Json& object, const char* rawKey, const char* lowKey) {
+    auto rawIt = object.find(rawKey);
+    if (rawIt != object.end()) {
+        uint64_t rawGuid = guidFromJsonValue(*rawIt);
+        if (rawGuid != 0) return rawGuid;
+    }
+
+    auto lowIt = object.find(lowKey);
+    if (lowIt != object.end()) {
+        uint64_t lowGuid = guidFromJsonValue(*lowIt);
+        if (lowGuid != 0) return lowGuid;
+    }
+
+    return std::nullopt;
+}
+
 float lerp(float a, float b, float t) {
     return a + (b - a) * t;
 }
@@ -184,6 +217,7 @@ bool GodviewRecording::load(const std::string& path, std::string& error) {
 
         Snapshot snapshot;
         snapshot.t = readU64(doc, "t");
+        snapshot.schema = readU32(doc, "schema", 1);
         snapshot.ms = readU64(doc, "ms", snapshot.t);
         snapshot.map = readU32(doc, "map");
         snapshot.instance = readU32(doc, "instance");
@@ -194,15 +228,17 @@ bool GodviewRecording::load(const std::string& path, std::string& error) {
                 if (!playerDoc.is_object()) continue;
 
                 Player player;
-                auto guidIt = playerDoc.find("guid");
-                player.guid = guidIt != playerDoc.end() ? guidFromJsonValue(*guidIt) : 0;
+                player.guid = readEntityGuid(playerDoc);
                 if (player.guid == 0) continue;
-                player.rawGuid = guidIt != playerDoc.end() ? readString(playerDoc, "guid") : std::to_string(player.guid);
+                player.rawGuid = readEntityGuidString(playerDoc, player.guid);
                 player.name = readString(playerDoc, "name", "Player");
                 player.level = std::max<uint8_t>(1, readU8(playerDoc, "level", 1));
                 player.race = std::max<uint8_t>(1, readU8(playerDoc, "race", 1));
                 player.playerClass = std::max<uint8_t>(1, readU8(playerDoc, "class", 1));
                 player.gender = std::min<uint8_t>(1, readU8(playerDoc, "gender", 0));
+                player.displayId = readU32(playerDoc, "display_id");
+                player.nativeDisplayId = readU32(playerDoc, "native_display_id");
+                player.mountDisplayId = readU32(playerDoc, "mount_display_id");
                 player.x = readFloat(playerDoc, "x");
                 player.y = readFloat(playerDoc, "y");
                 player.z = readFloat(playerDoc, "z");
@@ -210,14 +246,59 @@ bool GodviewRecording::load(const std::string& path, std::string& error) {
                 player.maxHp = std::max<uint32_t>(1, readU32(playerDoc, "maxhp", 1));
                 player.hp = std::min(readU32(playerDoc, "hp", player.maxHp), player.maxHp);
                 player.combat = readBool(playerDoc, "combat", false);
-                auto targetIt = playerDoc.find("target");
-                if (targetIt != playerDoc.end()) {
-                    uint64_t targetGuid = guidFromJsonValue(*targetIt);
-                    if (targetGuid != 0) player.targetGuid = targetGuid;
+                player.targetGuid = readOptionalGuid(playerDoc, "target_raw", "target");
+
+                auto equipmentIt = playerDoc.find("equipment");
+                if (equipmentIt != playerDoc.end() && equipmentIt->is_array()) {
+                    for (const auto& equipmentDoc : *equipmentIt) {
+                        if (!equipmentDoc.is_object()) continue;
+
+                        Equipment equipment;
+                        equipment.slot = readU8(equipmentDoc, "slot");
+                        if (equipment.slot >= 19) continue;
+                        equipment.itemId = readU32(equipmentDoc, "item_id");
+                        equipment.displayId = readU32(equipmentDoc, "display_id");
+                        equipment.inventoryType = readU8(equipmentDoc, "inventory_type");
+                        equipment.itemClass = readU8(equipmentDoc, "class");
+                        equipment.subclass = readU8(equipmentDoc, "subclass");
+                        if (equipment.displayId == 0 && equipment.itemId == 0) continue;
+                        player.equipment.push_back(equipment);
+                    }
                 }
 
                 snapshot.playerByGuid[player.guid] = snapshot.players.size();
                 snapshot.players.push_back(std::move(player));
+            }
+        }
+
+        auto creaturesIt = doc.find("creatures");
+        if (creaturesIt != doc.end() && creaturesIt->is_array()) {
+            for (const auto& creatureDoc : *creaturesIt) {
+                if (!creatureDoc.is_object()) continue;
+
+                Creature creature;
+                creature.guid = readEntityGuid(creatureDoc);
+                if (creature.guid == 0) continue;
+                creature.rawGuid = readEntityGuidString(creatureDoc, creature.guid);
+                creature.entry = readU32(creatureDoc, "entry");
+                creature.name = readString(creatureDoc, "name", "Creature");
+                creature.level = std::max<uint8_t>(1, readU8(creatureDoc, "level", 1));
+                creature.rank = readU8(creatureDoc, "rank");
+                creature.type = readU8(creatureDoc, "type");
+                creature.displayId = readU32(creatureDoc, "display_id");
+                creature.nativeDisplayId = readU32(creatureDoc, "native_display_id");
+                creature.x = readFloat(creatureDoc, "x");
+                creature.y = readFloat(creatureDoc, "y");
+                creature.z = readFloat(creatureDoc, "z");
+                creature.orientation = readFloat(creatureDoc, "o");
+                creature.maxHp = std::max<uint32_t>(1, readU32(creatureDoc, "maxhp", 1));
+                creature.hp = std::min(readU32(creatureDoc, "hp", creature.maxHp), creature.maxHp);
+                creature.targetGuid = readOptionalGuid(creatureDoc, "target_raw", "target");
+                creature.combat = readBool(creatureDoc, "combat", false);
+                creature.dead = readBool(creatureDoc, "dead", false);
+
+                snapshot.creatureByGuid[creature.guid] = snapshot.creatures.size();
+                snapshot.creatures.push_back(std::move(creature));
             }
         }
 
@@ -254,6 +335,10 @@ void GodviewRecording::rebuildIndexes() {
         for (size_t playerIndex = 0; playerIndex < snapshot.players.size(); ++playerIndex) {
             snapshot.playerByGuid[snapshot.players[playerIndex].guid] = playerIndex;
         }
+        snapshot.creatureByGuid.clear();
+        for (size_t creatureIndex = 0; creatureIndex < snapshot.creatures.size(); ++creatureIndex) {
+            snapshot.creatureByGuid[snapshot.creatures[creatureIndex].guid] = creatureIndex;
+        }
         snapshotIndicesByMap_[snapshot.map].push_back(i);
     }
 }
@@ -278,6 +363,17 @@ uint64_t GodviewRecording::endMsForMap(uint32_t mapId) const {
 size_t GodviewRecording::snapshotCountForMap(uint32_t mapId) const {
     auto it = snapshotIndicesByMap_.find(mapId);
     return it == snapshotIndicesByMap_.end() ? 0 : it->second.size();
+}
+
+size_t GodviewRecording::creatureCountForMap(uint32_t mapId) const {
+    auto it = snapshotIndicesByMap_.find(mapId);
+    if (it == snapshotIndicesByMap_.end()) return 0;
+
+    size_t count = 0;
+    for (size_t index : it->second) {
+        count = std::max(count, snapshots_[index].creatures.size());
+    }
+    return count;
 }
 
 std::vector<uint32_t> GodviewRecording::mapIds() const {
@@ -389,6 +485,53 @@ std::vector<GodviewRecording::InterpolatedPlayer> GodviewRecording::samplePlayer
             const float dy = nextPlayer.y - previousPlayer.y;
             const float dz = nextPlayer.z - previousPlayer.z;
             sampled.moving = (dx * dx + dy * dy + dz * dz) > (0.03f * 0.03f);
+        }
+
+        result.push_back(std::move(sampled));
+    }
+
+    return result;
+}
+
+std::vector<GodviewRecording::InterpolatedCreature> GodviewRecording::sampleCreatures(
+    double currentMs,
+    std::optional<uint32_t> mapId) const {
+    std::vector<InterpolatedCreature> result;
+    SnapshotPair pair = findSnapshotPair(currentMs, mapId);
+    if (!pair.valid) return result;
+
+    const Snapshot& prev = snapshots_[pair.prev];
+    const Snapshot& next = snapshots_[pair.next];
+    result.reserve(prev.creatures.size());
+
+    for (const Creature& previousCreature : prev.creatures) {
+        InterpolatedCreature sampled;
+        sampled.creature = previousCreature;
+
+        auto nextCreatureIt = next.creatureByGuid.find(previousCreature.guid);
+        if (nextCreatureIt != next.creatureByGuid.end() && pair.next != pair.prev) {
+            const Creature& nextCreature = next.creatures[nextCreatureIt->second];
+            sampled.creature.x = lerp(previousCreature.x, nextCreature.x, pair.alpha);
+            sampled.creature.y = lerp(previousCreature.y, nextCreature.y, pair.alpha);
+            sampled.creature.z = lerp(previousCreature.z, nextCreature.z, pair.alpha);
+            sampled.creature.orientation = lerpAngle(previousCreature.orientation,
+                                                     nextCreature.orientation,
+                                                     pair.alpha);
+            sampled.creature.hp = static_cast<uint32_t>(std::round(lerp(
+                static_cast<float>(previousCreature.hp),
+                static_cast<float>(nextCreature.hp),
+                pair.alpha)));
+            sampled.creature.maxHp = pair.alpha < 0.5f ? previousCreature.maxHp : nextCreature.maxHp;
+            sampled.creature.level = pair.alpha < 0.5f ? previousCreature.level : nextCreature.level;
+            sampled.creature.combat = pair.alpha < 0.5f ? previousCreature.combat : nextCreature.combat;
+            sampled.creature.dead = pair.alpha < 0.5f ? previousCreature.dead : nextCreature.dead;
+            sampled.creature.targetGuid = pair.alpha < 0.5f ? previousCreature.targetGuid : nextCreature.targetGuid;
+
+            const float dx = nextCreature.x - previousCreature.x;
+            const float dy = nextCreature.y - previousCreature.y;
+            const float dz = nextCreature.z - previousCreature.z;
+            sampled.moving = !sampled.creature.dead &&
+                             (dx * dx + dy * dy + dz * dz) > (0.03f * 0.03f);
         }
 
         result.push_back(std::move(sampled));
