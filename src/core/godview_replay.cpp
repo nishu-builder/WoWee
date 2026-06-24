@@ -459,7 +459,9 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
     return false;
 }
 
-bool GodviewReplay::seekTargetOrCombatEvent(int direction, bool includeCurrent) {
+bool GodviewReplay::seekEvent(GodviewRecording::EventKind kind,
+                              int direction,
+                              bool includeCurrent) {
     if (recording_.empty()) return false;
 
     direction = direction < 0 ? -1 : 1;
@@ -468,13 +470,18 @@ bool GodviewReplay::seekTargetOrCombatEvent(int direction, bool includeCurrent) 
         queryMs += direction > 0 ? -1.0 : 1.0;
     }
 
-    auto eventMs = recording_.findTargetOrCombatEventMs(queryMs, mapId_, direction);
+    auto eventMs = recording_.findEventMs(queryMs, mapId_, kind, direction);
     if (!eventMs) return false;
 
     setCurrentMs(static_cast<double>(*eventMs));
     paused_ = true;
-    LOG_INFO("Replay target/combat event: +", currentMs_ - static_cast<double>(startMs_), "ms");
+    const char* eventName = kind == GodviewRecording::EventKind::Combat ? "combat" : "target/combat";
+    LOG_INFO("Replay ", eventName, " event: +", currentMs_ - static_cast<double>(startMs_), "ms");
     return true;
+}
+
+bool GodviewReplay::seekTargetOrCombatEvent(int direction, bool includeCurrent) {
+    return seekEvent(GodviewRecording::EventKind::TargetOrCombat, direction, includeCurrent);
 }
 
 std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget() const {

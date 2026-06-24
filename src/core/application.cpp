@@ -109,6 +109,22 @@ int envIntValue(const char* key, int defaultValue) {
     return static_cast<int>(value);
 }
 
+std::optional<GodviewRecording::EventKind> replayEventKindFromEnv(const char* key) {
+    const char* raw = std::getenv(key);
+    if (!raw || !*raw) return std::nullopt;
+    if (raw[0] == '0' || raw[0] == 'f' || raw[0] == 'F' ||
+        raw[0] == 'n' || raw[0] == 'N') {
+        return std::nullopt;
+    }
+
+    std::string value(raw);
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (value == "combat") return GodviewRecording::EventKind::Combat;
+    return GodviewRecording::EventKind::TargetOrCombat;
+}
+
 float envFloatValue(const char* key, float defaultValue, float minValue, float maxValue) {
     const char* raw = std::getenv(key);
     if (!raw || !*raw) return defaultValue;
@@ -2494,17 +2510,24 @@ bool Application::startReplayMode() {
     const bool replayScreenshotRequested = replayScreenshotPathEnv && *replayScreenshotPathEnv;
     const char* replayScreenshotMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS");
     const bool replayScreenshotHasTargetMs = replayScreenshotMsEnv && *replayScreenshotMsEnv;
-    const bool replayScreenshotEventRequested =
-        replayScreenshotRequested && !replayScreenshotHasTargetMs &&
-        envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EVENT", false);
+    const auto replayScreenshotEventKind =
+        replayScreenshotRequested && !replayScreenshotHasTargetMs
+            ? replayEventKindFromEnv("WOWEE_REPLAY_SCREENSHOT_EVENT")
+            : std::nullopt;
 
     replay_->start();
     replayCameraFollowPosition_.reset();
     replayCameraFollowGuid_ = 0;
     replayCameraFollowTargetGuid_ = 0;
-    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false) || replayScreenshotEventRequested) {
-        if (!replay_->seekTargetOrCombatEvent(1, true)) {
-            LOG_WARNING("Replay target/combat event requested, but no target/combat snapshot was found");
+    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false) || replayScreenshotEventKind) {
+        const auto eventKind = replayScreenshotEventKind.value_or(
+            GodviewRecording::EventKind::TargetOrCombat);
+        if (!replay_->seekEvent(eventKind, 1, true)) {
+            if (eventKind == GodviewRecording::EventKind::Combat) {
+                LOG_WARNING("Replay combat event requested, but no combat snapshot was found");
+            } else {
+                LOG_WARNING("Replay target/combat event requested, but no target/combat snapshot was found");
+            }
         }
     }
     if (const char* focusPlayer = std::getenv("WOWEE_REPLAY_FOCUS_PLAYER")) {

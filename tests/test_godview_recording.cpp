@@ -118,6 +118,11 @@ TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[g
     REQUIRE(nextMap0);
     REQUIRE(*nextMap0 == 2000);
 
+    auto firstCombatMap0 = recording.findEventMs(999.0, 0, GodviewRecording::EventKind::Combat, 1);
+    REQUIRE(firstCombatMap0);
+    REQUIRE(*firstCombatMap0 == 2000);
+    REQUIRE_FALSE(recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Combat, 1));
+
     auto prevMap0 = recording.findTargetOrCombatEventMs(2000.0, 0, -1);
     REQUIRE(prevMap0);
     REQUIRE(*prevMap0 == 1000);

@@ -57,6 +57,7 @@ public:
 
     const Player* firstPlayer() const;
     bool focusPlayerByQuery(const std::string& query);
+    bool seekEvent(GodviewRecording::EventKind kind, int direction, bool includeCurrent = false);
     bool seekTargetOrCombatEvent(int direction, bool includeCurrent = false);
     std::optional<CameraFocusTarget> cameraFocusTarget() const;
 

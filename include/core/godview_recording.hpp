@@ -12,6 +12,11 @@ namespace core {
 
 class GodviewRecording {
 public:
+    enum class EventKind {
+        TargetOrCombat,
+        Combat,
+    };
+
     struct Equipment {
         uint8_t slot = 0;
         uint32_t itemId = 0;
@@ -112,6 +117,10 @@ public:
     const Player* firstPlayer() const;
     const Player* firstPlayerForMap(uint32_t mapId) const;
     SnapshotPair findSnapshotPair(double currentMs, std::optional<uint32_t> mapId = std::nullopt) const;
+    std::optional<uint64_t> findEventMs(double currentMs,
+                                        std::optional<uint32_t> mapId,
+                                        EventKind kind,
+                                        int direction) const;
     std::optional<uint64_t> findTargetOrCombatEventMs(double currentMs,
                                                       std::optional<uint32_t> mapId,
                                                       int direction) const;
