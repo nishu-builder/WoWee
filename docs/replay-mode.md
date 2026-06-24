@@ -229,6 +229,8 @@ Replay mode now uses Coworld v2 identity fields when available:
   sublabel when the recording contains a current target GUID.
 - Shows units targeted by a recorded player/creature even when they are not
   otherwise selected, and marks them with a compact `targeted` sublabel.
+- Keeps replay corpse nameplates visible with a compact `dead` sublabel so kill
+  and death-event captures preserve the defeated unit context.
 - Separates close replay target/source nameplates in screen space when the two
   labels would otherwise overlap.
 - Draws a replay-only target tether with a dark silhouette, arrow head, endpoint

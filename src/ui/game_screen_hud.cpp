@@ -978,14 +978,17 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer) {
             if (offlineReplay) {
-                if (!isTarget && unitTargetGuid == 0 && !recordedCombat && !isReplayTargeted) continue;
+                if (!isTarget && unitTargetGuid == 0 && !recordedCombat && !isReplayTargeted && !isCorpse) {
+                    continue;
+                }
             } else if (!showNameplates_) {
                 continue;
             }
         }
 
-        // For corpses (dead units), only show a minimal grey nameplate if selected
-        if (isCorpse && !isTarget && !isReplayTargeted) continue;
+        // Online corpses stay quiet unless selected, but replay death samples are
+        // part of the recording and need to remain readable in god-view captures.
+        if (isCorpse && !offlineReplay && !isTarget && !isReplayTargeted) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
@@ -1056,6 +1059,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                     separateFromReplayPeer(sourceIt->second);
                 }
             }
+            if (isCorpse && !isPlayer) {
+                for (const auto& peerEntry : gameHandler.getEntityManager().getEntities()) {
+                    const auto& peerEntity = peerEntry.second;
+                    if (!peerEntity || peerEntity->getType() != game::ObjectType::PLAYER) continue;
+                    separateFromReplayPeer(peerEntry.first);
+                }
+            }
             const float screenPad = 12.0f;
             sx = std::clamp(sx, screenPad, screenW - screenPad);
             sy = std::clamp(sy, screenPad, screenH - screenPad);
@@ -1118,6 +1128,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         ImU32 borderColor = IM_COL32(20, 20, 20, A(180));
         if (recordedCombat) {
             borderColor = IM_COL32(255, 70, 70, A(230));
+        }
+        if (offlineReplay && isCorpse) {
+            borderColor = IM_COL32(165, 165, 165, A(230));
         }
         if (isReplayTargeted) {
             borderColor = IM_COL32(120, 240, 255, A(230));
@@ -1492,6 +1505,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
+        }
+        if (offlineReplay && isCorpse) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "dead";
         }
         if (recordedCombat) {
             if (!subLabel.empty()) subLabel += "  ";
