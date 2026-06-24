@@ -132,6 +132,11 @@ During `AppState::IN_GAME`, replay mode follows a separate branch in
 - Advance replay time by `deltaTime * speed`, using the recorded `ms` clock.
 - Sample the previous and next snapshots for the active map and interpolate
   player and creature position/orientation.
+- Choose discrete avatar/display state from the nearest recorded snapshot while
+  position, orientation, and health interpolate continuously. This keeps
+  race/gender, display IDs, mounts, equipment, target state, combat/dead flags,
+  and creature display IDs close to the authoritative sample without making
+  movement jumpy.
 - Create/update `game::Player` entities with name, level, hp, maxhp, race, class,
   display fields, target fields, and combat state.
 - Create/update `game::Unit` entities for recorded creatures with entry, name,

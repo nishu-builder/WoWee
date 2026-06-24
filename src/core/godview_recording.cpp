@@ -525,6 +525,7 @@ std::vector<GodviewRecording::InterpolatedPlayer> GodviewRecording::samplePlayer
         auto nextPlayerIt = next.playerByGuid.find(previousPlayer.guid);
         if (nextPlayerIt != next.playerByGuid.end() && pair.next != pair.prev) {
             const Player& nextPlayer = next.players[nextPlayerIt->second];
+            const Player& discretePlayer = pair.alpha < 0.5f ? previousPlayer : nextPlayer;
             sampled.player.x = lerp(previousPlayer.x, nextPlayer.x, pair.alpha);
             sampled.player.y = lerp(previousPlayer.y, nextPlayer.y, pair.alpha);
             sampled.player.z = lerp(previousPlayer.z, nextPlayer.z, pair.alpha);
@@ -533,10 +534,18 @@ std::vector<GodviewRecording::InterpolatedPlayer> GodviewRecording::samplePlayer
                 static_cast<float>(previousPlayer.hp),
                 static_cast<float>(nextPlayer.hp),
                 pair.alpha)));
-            sampled.player.maxHp = pair.alpha < 0.5f ? previousPlayer.maxHp : nextPlayer.maxHp;
-            sampled.player.level = pair.alpha < 0.5f ? previousPlayer.level : nextPlayer.level;
-            sampled.player.combat = pair.alpha < 0.5f ? previousPlayer.combat : nextPlayer.combat;
-            sampled.player.targetGuid = pair.alpha < 0.5f ? previousPlayer.targetGuid : nextPlayer.targetGuid;
+            sampled.player.name = discretePlayer.name;
+            sampled.player.level = discretePlayer.level;
+            sampled.player.race = discretePlayer.race;
+            sampled.player.playerClass = discretePlayer.playerClass;
+            sampled.player.gender = discretePlayer.gender;
+            sampled.player.displayId = discretePlayer.displayId;
+            sampled.player.nativeDisplayId = discretePlayer.nativeDisplayId;
+            sampled.player.mountDisplayId = discretePlayer.mountDisplayId;
+            sampled.player.maxHp = discretePlayer.maxHp;
+            sampled.player.combat = discretePlayer.combat;
+            sampled.player.targetGuid = discretePlayer.targetGuid;
+            sampled.player.equipment = discretePlayer.equipment;
 
             const float dx = nextPlayer.x - previousPlayer.x;
             const float dy = nextPlayer.y - previousPlayer.y;
@@ -568,6 +577,7 @@ std::vector<GodviewRecording::InterpolatedCreature> GodviewRecording::sampleCrea
         auto nextCreatureIt = next.creatureByGuid.find(previousCreature.guid);
         if (nextCreatureIt != next.creatureByGuid.end() && pair.next != pair.prev) {
             const Creature& nextCreature = next.creatures[nextCreatureIt->second];
+            const Creature& discreteCreature = pair.alpha < 0.5f ? previousCreature : nextCreature;
             sampled.creature.x = lerp(previousCreature.x, nextCreature.x, pair.alpha);
             sampled.creature.y = lerp(previousCreature.y, nextCreature.y, pair.alpha);
             sampled.creature.z = lerp(previousCreature.z, nextCreature.z, pair.alpha);
@@ -578,11 +588,17 @@ std::vector<GodviewRecording::InterpolatedCreature> GodviewRecording::sampleCrea
                 static_cast<float>(previousCreature.hp),
                 static_cast<float>(nextCreature.hp),
                 pair.alpha)));
-            sampled.creature.maxHp = pair.alpha < 0.5f ? previousCreature.maxHp : nextCreature.maxHp;
-            sampled.creature.level = pair.alpha < 0.5f ? previousCreature.level : nextCreature.level;
-            sampled.creature.combat = pair.alpha < 0.5f ? previousCreature.combat : nextCreature.combat;
-            sampled.creature.dead = pair.alpha < 0.5f ? previousCreature.dead : nextCreature.dead;
-            sampled.creature.targetGuid = pair.alpha < 0.5f ? previousCreature.targetGuid : nextCreature.targetGuid;
+            sampled.creature.entry = discreteCreature.entry;
+            sampled.creature.name = discreteCreature.name;
+            sampled.creature.level = discreteCreature.level;
+            sampled.creature.rank = discreteCreature.rank;
+            sampled.creature.type = discreteCreature.type;
+            sampled.creature.displayId = discreteCreature.displayId;
+            sampled.creature.nativeDisplayId = discreteCreature.nativeDisplayId;
+            sampled.creature.maxHp = discreteCreature.maxHp;
+            sampled.creature.combat = discreteCreature.combat;
+            sampled.creature.dead = discreteCreature.dead;
+            sampled.creature.targetGuid = discreteCreature.targetGuid;
 
             const float dx = nextCreature.x - previousCreature.x;
             const float dy = nextCreature.y - previousCreature.y;
