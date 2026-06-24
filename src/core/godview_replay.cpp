@@ -438,8 +438,11 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
         focusNextPlayer(1);
         return focusedPlayerGuid_ != 0;
     }
-    if (loweredQuery == "event" || loweredQuery == "target" || loweredQuery == "target/combat") {
+    if (loweredQuery == "event" || loweredQuery == "target/combat") {
         return focusEventPlayer(GodviewRecording::EventKind::TargetOrCombat);
+    }
+    if (loweredQuery == "target") {
+        return focusEventPlayer(GodviewRecording::EventKind::Target);
     }
     if (loweredQuery == "combat") {
         return focusEventPlayer(GodviewRecording::EventKind::Combat);
@@ -479,13 +482,15 @@ bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
         return true;
     };
 
-    for (const auto& sampled : players) {
-        if (sampled.player.combat) {
-            return setFocusedPlayer(sampled.player, "event combat");
+    if (kind != GodviewRecording::EventKind::Target) {
+        for (const auto& sampled : players) {
+            if (sampled.player.combat) {
+                return setFocusedPlayer(sampled.player, "event combat");
+            }
         }
     }
 
-    if (kind == GodviewRecording::EventKind::TargetOrCombat) {
+    if (kind != GodviewRecording::EventKind::Combat) {
         for (const auto& sampled : players) {
             if (sampled.player.targetGuid) {
                 return setFocusedPlayer(sampled.player, "event target");
@@ -524,7 +529,12 @@ bool GodviewReplay::seekEvent(GodviewRecording::EventKind kind,
 
     setCurrentMs(static_cast<double>(*eventMs));
     paused_ = true;
-    const char* eventName = kind == GodviewRecording::EventKind::Combat ? "combat" : "target/combat";
+    const char* eventName = "target/combat";
+    if (kind == GodviewRecording::EventKind::Combat) {
+        eventName = "combat";
+    } else if (kind == GodviewRecording::EventKind::Target) {
+        eventName = "target";
+    }
     LOG_INFO("Replay ", eventName, " event: +", currentMs_ - static_cast<double>(startMs_), "ms");
     return true;
 }

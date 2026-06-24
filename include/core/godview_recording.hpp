@@ -14,6 +14,7 @@ class GodviewRecording {
 public:
     enum class EventKind {
         TargetOrCombat,
+        Target,
         Combat,
     };
 
