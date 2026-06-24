@@ -187,6 +187,36 @@ TEST_CASE("GodviewRecording loads v2 raw GUID equipment and creatures", "[godvie
     REQUIRE(creatures[0].moving == true);
 }
 
+TEST_CASE("GodviewRecording loads v3 replay events", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_v3_events",
+        R"JSON({"t":1700000000000,"schema":3,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"gender":1,"display_id":51,"native_display_id":51,"mount_display_id":0,"x":-620.0,"y":-4252.0,"z":40.0,"o":1.0,"hp":80,"maxhp":100,"target":2955,"target_raw":"0x20000000b8b","combat":true}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"rank":0,"type":1,"display_id":390,"native_display_id":390,"x":-625.0,"y":-4250.0,"z":40.0,"o":2.0,"hp":47,"maxhp":60,"target":50,"target_raw":"0x10000000032","combat":true,"dead":false}],"events":[{"kind":"damage","source":50,"source_raw":"0x10000000032","target":2955,"target_raw":"0x20000000b8b","amount":13,"school":1,"spell_id":6603,"critical":false}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    REQUIRE(recording.snapshots().size() == 1);
+    const auto& snapshot = recording.snapshots().front();
+    REQUIRE(snapshot.schema == 3);
+    REQUIRE(snapshot.events.size() == 1);
+    const auto& event = snapshot.events.front();
+    REQUIRE(event.kind == "damage");
+    REQUIRE(event.sourceGuid == 0x10000000032ull);
+    REQUIRE(event.sourceRawGuid == "0x10000000032");
+    REQUIRE(event.targetGuid == 0x20000000b8bull);
+    REQUIRE(event.targetRawGuid == "0x20000000b8b");
+    REQUIRE(event.amount == 13);
+    REQUIRE(event.school);
+    REQUIRE(*event.school == 1);
+    REQUIRE(event.spellId);
+    REQUIRE(*event.spellId == 6603);
+    REQUIRE(event.critical);
+    REQUIRE(*event.critical == false);
+}
+
 TEST_CASE("GodviewRecording switches discrete avatar fields at interpolation midpoint", "[godview][recording]") {
     auto path = writeTempRecording(
         "godview_discrete_fields",

@@ -168,6 +168,27 @@ bool hasReplayAttackPulseForTarget(const std::unordered_map<uint64_t, ReplayAtta
     });
 }
 
+bool isReplayDamageEvent(const GodviewRecording::ReplayEvent& event) {
+    return event.kind == "damage" && event.amount > 0 && event.sourceGuid != 0 && event.targetGuid != 0;
+}
+
+void addExplicitReplayDamagePulses(const GodviewRecording::Snapshot& next,
+                                   std::unordered_map<uint64_t, ReplayAttackPulse>& pulses) {
+    for (const auto& event : next.events) {
+        if (!isReplayDamageEvent(event) || pulses.count(event.sourceGuid) > 0) continue;
+
+        const bool sourceCreature = next.creatureByGuid.count(event.sourceGuid) > 0;
+        if (!sourceCreature && next.playerByGuid.count(event.sourceGuid) == 0) continue;
+
+        pulses[event.sourceGuid] = ReplayAttackPulse{
+            event.sourceGuid,
+            event.targetGuid,
+            next.ms,
+            sourceCreature,
+        };
+    }
+}
+
 void addNearestReplayDamagePulse(const GodviewRecording::Snapshot& next,
                                  const ReplayDamagedEntity& damaged,
                                  std::unordered_map<uint64_t, ReplayAttackPulse>& pulses) {
@@ -226,6 +247,8 @@ std::unordered_map<uint64_t, ReplayAttackPulse> inferReplayAttackPulses(
     const auto& prev = snapshots[pair.prev];
     const auto& next = snapshots[pair.next];
     std::vector<ReplayDamagedEntity> damagedEntities;
+
+    addExplicitReplayDamagePulses(next, pulses);
 
     for (const auto& nextPlayer : next.players) {
         auto prevIt = prev.playerByGuid.find(nextPlayer.guid);

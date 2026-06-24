@@ -247,10 +247,12 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses run animation while interpolated movement is nonzero, recorded weapon
   equipment to pick a player combat-ready pose when idle in combat, stand
   otherwise, and death animation when a creature snapshot is marked dead.
-- Infers short replay-only attack pulses when a player or creature's recorded
-  target loses HP between adjacent authoritative snapshots. If target fields have
-  already cleared, replay mode falls back to the nearest combat unit within
-  normal combat range so sparse recorder samples still show a visible swing.
+- Uses schema v3 `events` damage records for short replay-only attack pulses
+  when they are present. Older v1/v2 recordings still infer pulses when a player
+  or creature's recorded target loses HP between adjacent authoritative
+  snapshots. If target fields have already cleared, replay mode falls back to
+  the nearest combat unit within normal combat range so sparse recorder samples
+  still show a visible swing.
 
 ## Validation
 
