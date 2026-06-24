@@ -2271,12 +2271,25 @@ void Application::render() {
         uiManager->render(state, authHandler.get(), gameHandler.get());
     }
 
-    if (replay_ && replayScreenshotFramesRemaining_ >= 0 && !replayScreenshotPath_.empty()) {
-        if (replayScreenshotFramesRemaining_ == 0) {
+    if (replay_ && !replayScreenshotPath_.empty()) {
+        bool requestReplayScreenshot = false;
+        if (replayScreenshotTargetMs_ >= 0.0) {
+            if (replay_->currentMs() >= replayScreenshotTargetMs_) {
+                requestReplayScreenshot = true;
+                replayScreenshotTargetMs_ = -1.0;
+                replayScreenshotFramesRemaining_ = -1;
+            }
+        } else if (replayScreenshotFramesRemaining_ >= 0) {
+            if (replayScreenshotFramesRemaining_ == 0) {
+                requestReplayScreenshot = true;
+                replayScreenshotFramesRemaining_ = -1;
+            } else {
+                --replayScreenshotFramesRemaining_;
+            }
+        }
+
+        if (requestReplayScreenshot) {
             renderer->requestFrameScreenshot(replayScreenshotPath_);
-            replayScreenshotFramesRemaining_ = -1;
-        } else {
-            --replayScreenshotFramesRemaining_;
         }
     }
 
@@ -2397,15 +2410,34 @@ bool Application::startReplayMode() {
     replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
 
     replayScreenshotPath_.clear();
+    replayScreenshotTargetMs_ = -1.0;
     replayScreenshotFramesRemaining_ = -1;
     replayScreenshotExitAfterCapture_ = false;
     if (const char* screenshotPath = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH")) {
         if (*screenshotPath) {
             replayScreenshotPath_ = screenshotPath;
-            replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
             replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
-            LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
-                     " in ", replayScreenshotFramesRemaining_, " frame(s)");
+            if (const char* screenshotMs = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS")) {
+                if (*screenshotMs) {
+                    char* end = nullptr;
+                    double ms = std::strtod(screenshotMs, &end);
+                    if (end != screenshotMs && ms >= 0.0) {
+                        double startMs = static_cast<double>(replay_->startMs());
+                        double endMs = static_cast<double>(replay_->endMs());
+                        replayScreenshotTargetMs_ = (ms >= startMs && ms <= endMs)
+                            ? ms
+                            : startMs + ms;
+                        LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                                 " at replay +",
+                                 (replayScreenshotTargetMs_ - startMs), "ms");
+                    }
+                }
+            }
+            if (replayScreenshotTargetMs_ < 0.0) {
+                replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+                LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                         " in ", replayScreenshotFramesRemaining_, " frame(s)");
+            }
         }
     }
 

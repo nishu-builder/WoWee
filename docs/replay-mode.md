@@ -193,8 +193,10 @@ Replay mode now uses Coworld v2 identity fields when available:
   the recording says the unit is in combat.
 - Marks replay nameplates with an orange border and a compact `target: Name`
   sublabel when the recording contains a current target GUID.
-- Draws a thin replay-only target tether between visible target-bearing units and
-  their current target so god-view captures show engagement relationships at a glance.
+- Draws a replay-only target tether with a dark silhouette, arrow head, endpoint
+  reticle, and high-contrast combat color between visible target-bearing units
+  and their current target so god-view captures show engagement relationships at
+  a glance.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
 - Uses run animation while interpolated movement is nonzero, unarmed-ready while
@@ -213,8 +215,12 @@ WOW_DATA_PATH=/path/to/extracted/classic-data \
 ./build/bin/wowee --replay /path/to/godview.jsonl
 ```
 
-`WOWEE_REPLAY_SCREENSHOT_FRAMES` optionally controls how many rendered frames to
-wait before capture; it defaults to `120`.
+`WOWEE_REPLAY_SCREENSHOT_MS` optionally captures at a deterministic replay
+timestamp, in milliseconds from the first recording snapshot. Values that fall
+inside the recording's absolute `ms` range are treated as absolute server
+milliseconds. `WOWEE_REPLAY_SCREENSHOT_FRAMES` still controls how many rendered
+frames to wait before capture when no timestamp is supplied; it defaults to
+`120`.
 
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.
