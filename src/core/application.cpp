@@ -109,6 +109,15 @@ int envIntValue(const char* key, int defaultValue) {
     return static_cast<int>(value);
 }
 
+float envFloatValue(const char* key, float defaultValue, float minValue, float maxValue) {
+    const char* raw = std::getenv(key);
+    if (!raw || !*raw) return defaultValue;
+    char* end = nullptr;
+    float value = std::strtof(raw, &end);
+    if (end == raw || !std::isfinite(value)) return defaultValue;
+    return std::clamp(value, minValue, maxValue);
+}
+
 struct ReplayObserverPose {
     glm::vec3 position{0.0f};
     float yawDeg = 90.0f;
@@ -2370,8 +2379,10 @@ void Application::applyReplayCameraFollow(float deltaTime) {
 
     glm::vec3 pivot = focus->renderPosition + glm::vec3(0.0f, 0.0f, 2.0f);
     glm::vec2 viewBack(0.0f, -1.0f);
-    float backDistance = 38.0f;
-    float height = 48.0f;
+    const float baseBackDistance = envFloatValue("WOWEE_REPLAY_FOLLOW_DISTANCE", 38.0f, 8.0f, 300.0f);
+    const float baseHeight = envFloatValue("WOWEE_REPLAY_FOLLOW_HEIGHT", 48.0f, 6.0f, 240.0f);
+    float backDistance = baseBackDistance;
+    float height = baseHeight;
     uint64_t targetGuid = 0;
 
     if (focus->hasTarget) {
@@ -2380,8 +2391,12 @@ void Application::applyReplayCameraFollow(float deltaTime) {
         glm::vec2 relation(targetPivot.x - pivot.x, targetPivot.y - pivot.y);
         float span = glm::length(relation);
         pivot = (pivot + targetPivot) * 0.5f;
-        backDistance = std::clamp(38.0f + span * 0.55f, 38.0f, 120.0f);
-        height = std::clamp(48.0f + span * 0.35f, 48.0f, 96.0f);
+        backDistance = std::clamp(baseBackDistance + span * 0.55f,
+                                  baseBackDistance,
+                                  std::max(baseBackDistance, 120.0f));
+        height = std::clamp(baseHeight + span * 0.35f,
+                            baseHeight,
+                            std::max(baseHeight, 96.0f));
 
         if (span > 1.0f) {
             glm::vec2 pairDir = relation / span;
