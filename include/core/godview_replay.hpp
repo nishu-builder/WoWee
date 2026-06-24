@@ -114,6 +114,8 @@ private:
     std::unordered_map<uint64_t, bool> lastCreatureCombat_;
     std::unordered_map<uint64_t, bool> lastCreatureDead_;
     std::unordered_map<uint64_t, bool> lastMountMoving_;
+    std::unordered_map<uint64_t, uint64_t> lastReplayAttackPulseKey_;
+    std::unordered_set<uint64_t> activeReplayAttackGuids_;
     std::unordered_map<uint64_t, size_t> lastPlayerEquipmentHash_;
     std::unordered_set<uint64_t> displayOverridePlayerGuids_;
     std::unordered_map<uint64_t, uint32_t> displayOverridePlayerDisplayIds_;

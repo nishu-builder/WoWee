@@ -287,6 +287,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=None, help="Screenshot path to write.")
     parser.add_argument("--event", default="death", help="WOWEE_REPLAY_SCREENSHOT_EVENT value.")
     parser.add_argument("--focus", default=None, help="WOWEE_REPLAY_FOCUS_PLAYER value.")
+    parser.add_argument("--ms", type=float, default=None, help="Explicit WOWEE_REPLAY_SCREENSHOT_MS value.")
     parser.add_argument("--frames", type=int, default=90)
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--min-width", type=int, default=640)
@@ -328,7 +329,7 @@ def main() -> int:
         return 2
 
     event = normalize_event(args.event)
-    if event and not args.skip_event_preflight:
+    if event and args.ms is None and not args.skip_event_preflight:
         try:
             active_map, event_ms = preflight_replay_event(replay, event)
         except ReplayError as exc:
@@ -345,9 +346,11 @@ def main() -> int:
     env["WOWEE_REPLAY_SCREENSHOT_PATH"] = str(output)
     env["WOWEE_REPLAY_SCREENSHOT_EXIT"] = "1"
     env["WOWEE_REPLAY_SCREENSHOT_FRAMES"] = str(args.frames)
-    if event:
+    if args.ms is not None:
+        env["WOWEE_REPLAY_SCREENSHOT_MS"] = str(args.ms)
+    elif event:
         env["WOWEE_REPLAY_SCREENSHOT_EVENT"] = event
-    focus = args.focus if args.focus is not None else args.event
+    focus = args.focus if args.focus is not None else (args.event if args.ms is None else None)
     if focus:
         env["WOWEE_REPLAY_FOCUS_PLAYER"] = focus
     if not args.no_clean_capture:

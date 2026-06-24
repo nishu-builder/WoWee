@@ -20,6 +20,8 @@
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace wowee {
 namespace core {
@@ -31,6 +33,21 @@ constexpr float kReplayMountFallbackRiderZOffset = 1.35f;
 constexpr float kReplayMountSeatHeightFraction = 0.58f;
 constexpr float kReplayMountSeatMinZOffset = 0.8f;
 constexpr float kReplayMountSeatMaxZOffset = 3.25f;
+constexpr float kReplayInferredAttackMaxRange = 45.0f;
+constexpr float kReplayInferredAttackStartAlpha = 0.02f;
+constexpr float kReplayInferredAttackEndAlpha = 0.85f;
+
+struct ReplayAttackPulse {
+    uint64_t sourceGuid = 0;
+    uint64_t targetGuid = 0;
+    uint64_t snapshotMs = 0;
+    bool sourceCreature = false;
+};
+
+struct ReplayDamagedEntity {
+    uint64_t guid = 0;
+    glm::vec3 position{0.0f};
+};
 
 uint32_t makeAppearanceBytes(uint8_t skin, uint8_t face, uint8_t hair, uint8_t hairColor) {
     return static_cast<uint32_t>(skin) |
@@ -103,6 +120,139 @@ const GodviewRecording::Equipment* findReplayEquipmentSlot(const GodviewRecordin
     return nullptr;
 }
 
+uint64_t replayAttackPulseKey(const ReplayAttackPulse& pulse) {
+    uint64_t hash = pulse.snapshotMs ^ (pulse.targetGuid + 0x9e3779b97f4a7c15ull);
+    hash ^= pulse.sourceCreature ? 0x8000000000000000ull : 0ull;
+    return hash != 0 ? hash : 1;
+}
+
+float replayDistanceSq(const glm::vec3& a, const glm::vec3& b) {
+    const glm::vec3 d = a - b;
+    return d.x * d.x + d.y * d.y + d.z * d.z;
+}
+
+template <typename EntityT>
+glm::vec3 replayEntityPosition(const EntityT& entity) {
+    return glm::vec3(entity.x, entity.y, entity.z);
+}
+
+void addReplayDamagePulsesForTarget(const GodviewRecording::Snapshot& next,
+                                    const ReplayDamagedEntity& damaged,
+                                    std::unordered_map<uint64_t, ReplayAttackPulse>& pulses) {
+    auto addPulse = [&](uint64_t sourceGuid, bool sourceCreature) {
+        if (sourceGuid == 0 || sourceGuid == damaged.guid || pulses.count(sourceGuid) > 0) return;
+        pulses[sourceGuid] = ReplayAttackPulse{
+            sourceGuid,
+            damaged.guid,
+            next.ms,
+            sourceCreature,
+        };
+    };
+
+    for (const auto& player : next.players) {
+        if (player.combat && player.targetGuid && *player.targetGuid == damaged.guid) {
+            addPulse(player.guid, false);
+        }
+    }
+    for (const auto& creature : next.creatures) {
+        if (!creature.dead && creature.combat && creature.targetGuid && *creature.targetGuid == damaged.guid) {
+            addPulse(creature.guid, true);
+        }
+    }
+}
+
+bool hasReplayAttackPulseForTarget(const std::unordered_map<uint64_t, ReplayAttackPulse>& pulses,
+                                   uint64_t targetGuid) {
+    return std::any_of(pulses.begin(), pulses.end(), [targetGuid](const auto& entry) {
+        return entry.second.targetGuid == targetGuid;
+    });
+}
+
+void addNearestReplayDamagePulse(const GodviewRecording::Snapshot& next,
+                                 const ReplayDamagedEntity& damaged,
+                                 std::unordered_map<uint64_t, ReplayAttackPulse>& pulses) {
+    if (hasReplayAttackPulseForTarget(pulses, damaged.guid)) return;
+
+    const float maxDistSq = kReplayInferredAttackMaxRange * kReplayInferredAttackMaxRange;
+    uint64_t bestGuid = 0;
+    bool bestCreature = false;
+    float bestDistSq = maxDistSq;
+
+    auto consider = [&](uint64_t guid, bool sourceCreature, const glm::vec3& position) {
+        if (guid == 0 || guid == damaged.guid || pulses.count(guid) > 0) return;
+        const float distSq = replayDistanceSq(position, damaged.position);
+        if (distSq <= bestDistSq) {
+            bestGuid = guid;
+            bestCreature = sourceCreature;
+            bestDistSq = distSq;
+        }
+    };
+
+    for (const auto& player : next.players) {
+        if (player.combat && player.hp > 0) {
+            consider(player.guid, false, replayEntityPosition(player));
+        }
+    }
+    for (const auto& creature : next.creatures) {
+        if (!creature.dead && creature.combat && creature.hp > 0) {
+            consider(creature.guid, true, replayEntityPosition(creature));
+        }
+    }
+
+    if (bestGuid != 0) {
+        pulses[bestGuid] = ReplayAttackPulse{
+            bestGuid,
+            damaged.guid,
+            next.ms,
+            bestCreature,
+        };
+    }
+}
+
+std::unordered_map<uint64_t, ReplayAttackPulse> inferReplayAttackPulses(
+    const GodviewRecording& recording,
+    double currentMs,
+    uint32_t mapId) {
+    std::unordered_map<uint64_t, ReplayAttackPulse> pulses;
+    GodviewRecording::SnapshotPair pair = recording.findSnapshotPair(currentMs, mapId);
+    if (!pair.valid ||
+        pair.prev == pair.next ||
+        pair.alpha < kReplayInferredAttackStartAlpha ||
+        pair.alpha > kReplayInferredAttackEndAlpha) {
+        return pulses;
+    }
+
+    const auto& snapshots = recording.snapshots();
+    const auto& prev = snapshots[pair.prev];
+    const auto& next = snapshots[pair.next];
+    std::vector<ReplayDamagedEntity> damagedEntities;
+
+    for (const auto& nextPlayer : next.players) {
+        auto prevIt = prev.playerByGuid.find(nextPlayer.guid);
+        if (prevIt == prev.playerByGuid.end()) continue;
+        const auto& prevPlayer = prev.players[prevIt->second];
+        if (nextPlayer.hp < prevPlayer.hp) {
+            damagedEntities.push_back({nextPlayer.guid, replayEntityPosition(nextPlayer)});
+        }
+    }
+    for (const auto& nextCreature : next.creatures) {
+        auto prevIt = prev.creatureByGuid.find(nextCreature.guid);
+        if (prevIt == prev.creatureByGuid.end()) continue;
+        const auto& prevCreature = prev.creatures[prevIt->second];
+        if (nextCreature.hp < prevCreature.hp) {
+            damagedEntities.push_back({nextCreature.guid, replayEntityPosition(nextCreature)});
+        }
+    }
+
+    for (const auto& damaged : damagedEntities) {
+        addReplayDamagePulsesForTarget(next, damaged, pulses);
+    }
+    for (const auto& damaged : damagedEntities) {
+        addNearestReplayDamagePulse(next, damaged, pulses);
+    }
+    return pulses;
+}
+
 uint32_t replayReadyAnimationForWeapon(const GodviewRecording::Equipment& equipment,
                                        rendering::CharacterRenderer& characterRenderer,
                                        uint32_t instanceId) {
@@ -152,6 +302,97 @@ uint32_t replayReadyAnimationForWeapon(const GodviewRecording::Equipment& equipm
             return pickFirstAvailableAnimation(characterRenderer, instanceId,
                                                {anim::READY_1H, anim::READY_UNARMED});
     }
+}
+
+uint32_t replayAttackAnimationForWeapon(const GodviewRecording::Equipment& equipment,
+                                        rendering::CharacterRenderer& characterRenderer,
+                                        uint32_t instanceId) {
+    using namespace rendering;
+
+    switch (equipment.subclass) {
+        case 2:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_BOW, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        case 3:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_RIFLE, anim::ATTACK_BOW, anim::ATTACK_1H,
+                                                anim::ATTACK_UNARMED});
+        case 16:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_THROWN, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        case 17:
+        case 18:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_BOW, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        case 6:
+        case 10:
+        case 20:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_2H_LOOSE, anim::ATTACK_2H, anim::ATTACK_1H,
+                                                anim::ATTACK_UNARMED});
+        case 13:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_FIST_1H, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        case 15:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_1H_PIERCE, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        default:
+            break;
+    }
+
+    switch (equipment.inventoryType) {
+        case game::InvType::RANGED_BOW:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_BOW, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        case game::InvType::RANGED_GUN:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_RIFLE, anim::ATTACK_BOW, anim::ATTACK_1H,
+                                                anim::ATTACK_UNARMED});
+        case game::InvType::THROWN:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_THROWN, anim::ATTACK_1H, anim::ATTACK_UNARMED});
+        case game::InvType::TWO_HAND:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_2H, anim::ATTACK_2H_LOOSE, anim::ATTACK_1H,
+                                                anim::ATTACK_UNARMED});
+        default:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::ATTACK_1H, anim::ATTACK_UNARMED});
+    }
+}
+
+uint32_t replayPlayerAttackAnimation(const GodviewRecording::Player& player,
+                                     rendering::CharacterRenderer& characterRenderer,
+                                     uint32_t instanceId) {
+    if (const auto* mainHand = findReplayEquipmentSlot(player, 15)) {
+        if (uint32_t anim = replayAttackAnimationForWeapon(*mainHand, characterRenderer, instanceId)) {
+            return anim;
+        }
+    }
+    if (const auto* offHand = findReplayEquipmentSlot(player, 16)) {
+        if (uint32_t anim = replayAttackAnimationForWeapon(*offHand, characterRenderer, instanceId)) {
+            return anim;
+        }
+    }
+    if (const auto* ranged = findReplayEquipmentSlot(player, 17)) {
+        if (uint32_t anim = replayAttackAnimationForWeapon(*ranged, characterRenderer, instanceId)) {
+            return anim;
+        }
+    }
+    return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                       {rendering::anim::ATTACK_UNARMED,
+                                        rendering::anim::ATTACK_1H,
+                                        rendering::anim::STAND});
+}
+
+uint32_t replayCreatureAttackAnimation(rendering::CharacterRenderer& characterRenderer,
+                                       uint32_t instanceId) {
+    return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                       {rendering::anim::ATTACK_UNARMED,
+                                        rendering::anim::ATTACK_1H,
+                                        rendering::anim::ATTACK_2H,
+                                        rendering::anim::ATTACK_2H_LOOSE,
+                                        rendering::anim::STAND});
 }
 
 uint32_t replayPlayerCombatReadyAnimation(const GodviewRecording::Player& player,
@@ -395,6 +636,8 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     lastCreatureCombat_.clear();
     lastCreatureDead_.clear();
     lastMountMoving_.clear();
+    lastReplayAttackPulseKey_.clear();
+    activeReplayAttackGuids_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
     displayOverridePlayerDisplayIds_.clear();
@@ -454,6 +697,8 @@ void GodviewReplay::start() {
     lastCreatureCombat_.clear();
     lastCreatureDead_.clear();
     lastMountMoving_.clear();
+    lastReplayAttackPulseKey_.clear();
+    activeReplayAttackGuids_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
     displayOverridePlayerDisplayIds_.clear();
@@ -1035,6 +1280,8 @@ void GodviewReplay::despawnMissingPlayers(game::GameHandler& gameHandler,
         lastMoving_.erase(guid);
         lastPlayerCombat_.erase(guid);
         lastPlayerMounted_.erase(guid);
+        lastReplayAttackPulseKey_.erase(guid);
+        activeReplayAttackGuids_.erase(guid);
         lastPlayerEquipmentHash_.erase(guid);
         despawnReplayMount(entitySpawner, guid);
     }
@@ -1054,6 +1301,8 @@ void GodviewReplay::despawnMissingCreatures(game::GameHandler& gameHandler,
         lastCreatureMoving_.erase(guid);
         lastCreatureCombat_.erase(guid);
         lastCreatureDead_.erase(guid);
+        lastReplayAttackPulseKey_.erase(guid);
+        activeReplayAttackGuids_.erase(guid);
     }
 }
 
@@ -1080,6 +1329,9 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
     (void)gameHandler;
     auto* charRenderer = renderer.getCharacterRenderer();
     if (!charRenderer) return;
+
+    const auto attackPulses = inferReplayAttackPulses(recording_, currentMs_, mapId_);
+    std::unordered_set<uint64_t> currentlyAttacking;
 
     auto players = recording_.samplePlayers(currentMs_, mapId_);
     for (const auto& sampled : players) {
@@ -1146,6 +1398,20 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
                 lastMountMoving_[mountGuidIt->second] = moving;
             }
         }
+
+        auto attackIt = attackPulses.find(player.guid);
+        if (attackIt != attackPulses.end() && !mounted) {
+            currentlyAttacking.insert(player.guid);
+            const uint64_t pulseKey = replayAttackPulseKey(attackIt->second);
+            auto lastPulseIt = lastReplayAttackPulseKey_.find(player.guid);
+            if (lastPulseIt == lastReplayAttackPulseKey_.end() || lastPulseIt->second != pulseKey) {
+                uint32_t attackAnim = replayPlayerAttackAnimation(player, *charRenderer, instanceId);
+                if (attackAnim != 0) {
+                    charRenderer->playAnimation(instanceId, attackAnim, false);
+                    lastReplayAttackPulseKey_[player.guid] = pulseKey;
+                }
+            }
+        }
     }
 
     auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
@@ -1191,7 +1457,31 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
             lastCreatureCombat_[creature.guid] = creature.combat;
             lastCreatureDead_[creature.guid] = false;
         }
+
+        auto attackIt = attackPulses.find(creature.guid);
+        if (attackIt != attackPulses.end()) {
+            currentlyAttacking.insert(creature.guid);
+            const uint64_t pulseKey = replayAttackPulseKey(attackIt->second);
+            auto lastPulseIt = lastReplayAttackPulseKey_.find(creature.guid);
+            if (lastPulseIt == lastReplayAttackPulseKey_.end() || lastPulseIt->second != pulseKey) {
+                uint32_t attackAnim = replayCreatureAttackAnimation(*charRenderer, instanceId);
+                if (attackAnim != 0) {
+                    charRenderer->playAnimation(instanceId, attackAnim, false);
+                    lastReplayAttackPulseKey_[creature.guid] = pulseKey;
+                }
+            }
+        }
     }
+
+    for (uint64_t guid : activeReplayAttackGuids_) {
+        if (currentlyAttacking.count(guid) > 0) continue;
+        lastMoving_.erase(guid);
+        lastPlayerCombat_.erase(guid);
+        lastCreatureMoving_.erase(guid);
+        lastCreatureCombat_.erase(guid);
+        lastCreatureDead_.erase(guid);
+    }
+    activeReplayAttackGuids_ = std::move(currentlyAttacking);
 }
 
 void GodviewReplay::handleKeyDown(const SDL_KeyboardEvent& event) {

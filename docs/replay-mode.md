@@ -247,6 +247,10 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses run animation while interpolated movement is nonzero, recorded weapon
   equipment to pick a player combat-ready pose when idle in combat, stand
   otherwise, and death animation when a creature snapshot is marked dead.
+- Infers short replay-only attack pulses when a player or creature's recorded
+  target loses HP between adjacent authoritative snapshots. If target fields have
+  already cleared, replay mode falls back to the nearest combat unit within
+  normal combat range so sparse recorder samples still show a visible swing.
 
 ## Validation
 
@@ -309,6 +313,18 @@ python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
   --event death \
   --focus death \
   --output build/bin/wowee_replay_death.png
+```
+
+Use `--ms <server-ms>` for deterministic captures inside a known damage or
+movement interval. Explicit `--ms` captures skip event preflight and do not seek
+to `--event`:
+
+```bash
+python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --ms 28560 \
+  --focus combat \
+  --output build/bin/wowee_replay_damage.png
 ```
 
 Use `--validate-only --output <png>` to re-check an existing screenshot without
