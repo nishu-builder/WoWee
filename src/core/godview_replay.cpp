@@ -438,6 +438,12 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
         focusNextPlayer(1);
         return focusedPlayerGuid_ != 0;
     }
+    if (loweredQuery == "event" || loweredQuery == "target" || loweredQuery == "target/combat") {
+        return focusEventPlayer(GodviewRecording::EventKind::TargetOrCombat);
+    }
+    if (loweredQuery == "combat") {
+        return focusEventPlayer(GodviewRecording::EventKind::Combat);
+    }
 
     for (bool allowSubstring : {false, true}) {
         for (const auto& snapshot : recording_.snapshots()) {
@@ -452,6 +458,49 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
                             ? std::to_string(player.guid)
                             : player.rawGuid);
                 return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
+    auto players = recording_.samplePlayers(currentMs_, mapId_);
+    if (players.empty()) return false;
+
+    auto setFocusedPlayer = [this](const Player& player, const char* reason) {
+        focusedPlayerGuid_ = player.guid;
+        LOG_INFO("Replay camera focus: ", player.name,
+                 " guid=", player.rawGuid.empty()
+                    ? std::to_string(player.guid)
+                    : player.rawGuid,
+                 " (", reason, ")");
+        return true;
+    };
+
+    for (const auto& sampled : players) {
+        if (sampled.player.combat) {
+            return setFocusedPlayer(sampled.player, "event combat");
+        }
+    }
+
+    if (kind == GodviewRecording::EventKind::TargetOrCombat) {
+        for (const auto& sampled : players) {
+            if (sampled.player.targetGuid) {
+                return setFocusedPlayer(sampled.player, "event target");
+            }
+        }
+    }
+
+    auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
+    for (const auto& creature : creatures) {
+        if (!creature.creature.targetGuid) continue;
+        if (kind == GodviewRecording::EventKind::Combat && !creature.creature.combat) continue;
+        const uint64_t targetGuid = *creature.creature.targetGuid;
+        for (const auto& sampled : players) {
+            if (sampled.player.guid == targetGuid) {
+                return setFocusedPlayer(sampled.player, "event creature target");
             }
         }
     }

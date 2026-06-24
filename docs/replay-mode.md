@@ -267,9 +267,12 @@ Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
 clean captures while keeping replay nameplates and target cues visible. The replay
 overlay can also be toggled interactively with `H`.
 
-Set `WOWEE_REPLAY_FOCUS_PLAYER=first` or a recorded player name/guid to start with
-the observer camera following that player. This is useful with
-`WOWEE_REPLAY_SCREENSHOT_MS` when comparing captures across replay changes.
+Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `combat`, or a recorded player
+name/guid to start with the observer camera following that player. `event`
+selects a player involved in the current target-or-combat sample; `combat`
+selects a player involved in the current combat sample. This is useful with
+`WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
+captures across replay changes.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
 or widen the follow camera for detail-oriented screenshot smokes.
 
