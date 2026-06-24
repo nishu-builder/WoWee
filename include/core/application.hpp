@@ -173,6 +173,7 @@ private:
     bool replayScreenshotExitAfterCapture_ = false;
     std::optional<glm::vec3> replayCameraFollowPosition_;
     uint64_t replayCameraFollowGuid_ = 0;
+    uint64_t replayCameraFollowTargetGuid_ = 0;
 
     // Player character info (for model spawning)
     game::Race playerRace_ = game::Race::HUMAN;

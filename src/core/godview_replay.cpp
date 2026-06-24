@@ -183,6 +183,11 @@ bool playerMatchesFocusQuery(const GodviewRecording::Player& player,
     return loweredName == loweredQuery;
 }
 
+glm::vec3 toRenderPosition(float x, float y, float z) {
+    glm::vec3 canonical = coords::serverToCanonical(glm::vec3(x, y, z));
+    return coords::canonicalToRender(canonical);
+}
+
 } // namespace
 
 bool GodviewReplay::load(const std::string& path, std::string& error) {
@@ -334,12 +339,39 @@ std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget
     }
     if (!selected) selected = &players.front();
 
-    glm::vec3 canonical = coords::serverToCanonical(
-        glm::vec3(selected->player.x, selected->player.y, selected->player.z));
     CameraFocusTarget target;
     target.guid = selected->player.guid;
     target.name = selected->player.name;
-    target.renderPosition = coords::canonicalToRender(canonical);
+    target.renderPosition = toRenderPosition(selected->player.x,
+                                             selected->player.y,
+                                             selected->player.z);
+
+    if (selected->player.targetGuid) {
+        target.targetGuid = *selected->player.targetGuid;
+        for (const auto& player : players) {
+            if (player.player.guid != target.targetGuid) continue;
+            target.hasTarget = true;
+            target.targetName = player.player.name;
+            target.targetRenderPosition = toRenderPosition(player.player.x,
+                                                           player.player.y,
+                                                           player.player.z);
+            break;
+        }
+
+        if (!target.hasTarget) {
+            auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
+            for (const auto& creature : creatures) {
+                if (creature.creature.guid != target.targetGuid) continue;
+                target.hasTarget = true;
+                target.targetName = creature.creature.name;
+                target.targetRenderPosition = toRenderPosition(creature.creature.x,
+                                                               creature.creature.y,
+                                                               creature.creature.z);
+                break;
+            }
+        }
+    }
+
     return target;
 }
 
@@ -750,7 +782,14 @@ void GodviewReplay::renderOverlay() {
     }
     std::string focusName = focusedPlayerName();
     if (cameraFollowEnabled_) {
-        ImGui::Text("Camera following: %s", focusName.empty() ? "first active player" : focusName.c_str());
+        auto focusTarget = cameraFocusTarget();
+        if (focusTarget && focusTarget->hasTarget && !focusTarget->targetName.empty()) {
+            ImGui::Text("Camera following: %s -> %s",
+                        focusName.empty() ? "first active player" : focusName.c_str(),
+                        focusTarget->targetName.c_str());
+        } else {
+            ImGui::Text("Camera following: %s", focusName.empty() ? "first active player" : focusName.c_str());
+        }
     } else if (!focusName.empty()) {
         ImGui::Text("Camera focus: %s", focusName.c_str());
     } else {

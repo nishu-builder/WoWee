@@ -193,6 +193,9 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Can lock the observer camera to a recorded player from the replay overlay,
   `F`/`Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
   deterministic inspection captures.
+- When the focused player has a recorded target that is also present in the
+  sampled frame, the follow camera frames the player-target midpoint and backs
+  out far enough to keep the engagement readable.
 - Forces offline replay nameplates on for recorded players, keeps player labels
   visible from the high observer camera, and limits default creature labels to
   selected, combat, or target-bearing units so dense captures remain readable.
