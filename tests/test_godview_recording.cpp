@@ -217,6 +217,26 @@ TEST_CASE("GodviewRecording loads v3 replay events", "[godview][recording]") {
     REQUIRE(*event.critical == false);
 }
 
+TEST_CASE("GodviewRecording finds explicit v3 replay death events", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_v3_death_event",
+        R"JSON({"t":1700000000000,"schema":3,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":0.0,"hp":80,"maxhp":100,"target":0,"target_raw":0,"combat":false}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":0.0,"hp":47,"maxhp":60,"target":0,"target_raw":0,"combat":false,"dead":false}],"events":[]}
+{"t":1700000000500,"schema":3,"ms":1500,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":0.0,"hp":80,"maxhp":100,"target":0,"target_raw":0,"combat":false}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":0.0,"hp":47,"maxhp":60,"target":0,"target_raw":0,"combat":false,"dead":false}],"events":[{"kind":"death","source":50,"source_raw":"0x10000000032","target":2955,"target_raw":"0x20000000b8b","amount":0}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto firstDeath = recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Death, 1);
+    REQUIRE(firstDeath);
+    REQUIRE(*firstDeath == 1500);
+    auto previousDeath = recording.findEventMs(2000.0, 1, GodviewRecording::EventKind::Death, -1);
+    REQUIRE(previousDeath);
+    REQUIRE(*previousDeath == 1500);
+}
+
 TEST_CASE("GodviewRecording switches discrete avatar fields at interpolation midpoint", "[godview][recording]") {
     auto path = writeTempRecording(
         "godview_discrete_fields",

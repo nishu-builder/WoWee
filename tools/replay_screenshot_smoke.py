@@ -63,6 +63,21 @@ def normalize_event(value: str | None) -> str | None:
 
 
 def snapshot_has_event(snapshot: dict[str, object], event: str) -> bool:
+    replay_events = snapshot.get("events")
+    if isinstance(replay_events, list):
+        for replay_event in replay_events:
+            if not isinstance(replay_event, dict):
+                continue
+            kind = str(replay_event.get("kind", "")).lower()
+            if event == "death" and kind == "death":
+                return True
+            if event == "combat" and kind in {"combat", "damage"}:
+                return True
+            if event == "target" and kind == "target":
+                return True
+            if event == "target-or-combat" and kind in {"target", "combat", "damage", "death"}:
+                return True
+
     players = snapshot.get("players")
     if not isinstance(players, list):
         players = []

@@ -197,6 +197,23 @@ float lerpAngle(float a, float b, float t) {
 
 bool hasReplayEvent(const GodviewRecording::Snapshot& snapshot,
                     GodviewRecording::EventKind kind) {
+    auto explicitEventMatches = [kind](const GodviewRecording::ReplayEvent& event) {
+        if (kind == GodviewRecording::EventKind::Death) {
+            return event.kind == "death";
+        }
+        if (kind == GodviewRecording::EventKind::Combat) {
+            return event.kind == "combat" || event.kind == "damage";
+        }
+        if (kind == GodviewRecording::EventKind::Target) {
+            return event.kind == "target";
+        }
+        return event.kind == "target" || event.kind == "combat" ||
+               event.kind == "damage" || event.kind == "death";
+    };
+    if (std::any_of(snapshot.events.begin(), snapshot.events.end(), explicitEventMatches)) {
+        return true;
+    }
+
     if (kind == GodviewRecording::EventKind::Death) {
         if (std::any_of(snapshot.players.begin(), snapshot.players.end(),
                         [](const auto& player) { return player.hp == 0; })) {

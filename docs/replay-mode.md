@@ -212,9 +212,9 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Can seek screenshot smokes to the first target-or-combat snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=1`, the first target snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, the first combat snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, or the first death snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=death`, when no explicit screenshot timestamp
-  is set.
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, or the first explicit/snapshot death
+  event with `WOWEE_REPLAY_SCREENSHOT_EVENT=death`, when no explicit screenshot
+  timestamp is set.
 - When the focused player has a recorded target that is also present in the
   sampled frame, the follow camera frames the player-target midpoint and backs
   out far enough to keep the engagement readable.
@@ -247,8 +247,9 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses run animation while interpolated movement is nonzero, recorded weapon
   equipment to pick a player combat-ready pose when idle in combat, stand
   otherwise, and death animation when a creature snapshot is marked dead.
-- Uses schema v3 `events` damage records for short replay-only attack pulses
-  when they are present. Older v1/v2 recordings still infer pulses when a player
+- Uses schema v3 `events` records as explicit replay cues: `damage` drives short
+  replay-only attack pulses, and `death` is accepted by replay event seeking and
+  screenshot preflight. Older v1/v2 recordings still infer pulses when a player
   or creature's recorded target loses HP between adjacent authoritative
   snapshots. If target fields have already cleared, replay mode falls back to
   the nearest combat unit within normal combat range so sparse recorder samples
@@ -277,8 +278,8 @@ Set `WOWEE_REPLAY_SCREENSHOT_EVENT=1` to seek the replay to the first
 target-or-combat snapshot before scheduling a screenshot. Use
 `WOWEE_REPLAY_SCREENSHOT_EVENT=target` for the first target-bearing snapshot, or
 `WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot, or
-`WOWEE_REPLAY_SCREENSHOT_EVENT=death` for the first player or creature death
-snapshot.
+`WOWEE_REPLAY_SCREENSHOT_EVENT=death` for the first explicit death event or
+player/creature death snapshot.
 This is useful for recordings where the interesting action time changes between
 captures. An explicit `WOWEE_REPLAY_SCREENSHOT_MS` takes precedence when both are
 set.
