@@ -5,6 +5,7 @@
 #include "core/logger.hpp"
 #include "game/entity.hpp"
 #include "game/game_handler.hpp"
+#include "game/inventory.hpp"
 #include "game/update_field_table.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/character_renderer.hpp"
@@ -17,6 +18,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
 
 namespace wowee {
@@ -78,6 +80,107 @@ bool shouldRenderPlayerAsDisplayModel(uint32_t displayId,
     return !isPlayableRace(appearance->raceId);
 }
 
+uint32_t pickFirstAvailableAnimation(rendering::CharacterRenderer& characterRenderer,
+                                     uint32_t instanceId,
+                                     std::initializer_list<uint32_t> candidates) {
+    for (uint32_t candidate : candidates) {
+        if (candidate != 0 && characterRenderer.hasAnimation(instanceId, candidate)) {
+            return candidate;
+        }
+    }
+    return 0;
+}
+
+const GodviewRecording::Equipment* findReplayEquipmentSlot(const GodviewRecording::Player& player,
+                                                           uint8_t slot) {
+    for (const auto& equipment : player.equipment) {
+        if (equipment.slot == slot &&
+            equipment.itemClass == 2 &&
+            (equipment.displayId != 0 || equipment.itemId != 0)) {
+            return &equipment;
+        }
+    }
+    return nullptr;
+}
+
+uint32_t replayReadyAnimationForWeapon(const GodviewRecording::Equipment& equipment,
+                                       rendering::CharacterRenderer& characterRenderer,
+                                       uint32_t instanceId) {
+    using namespace rendering;
+
+    switch (equipment.subclass) {
+        case 2:  // Bow
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED});
+        case 3:  // Gun
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_RIFLE, anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED});
+        case 16: // Thrown
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_THROWN, anim::READY_1H, anim::READY_UNARMED});
+        case 17: // Crossbow in some client tables
+        case 18: // Crossbow in classic item tables
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_CROSSBOW, anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED});
+        case 6:  // Polearm
+        case 10: // Staff
+        case 20: // Fishing pole
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_2H_LOOSE, anim::READY_2H, anim::READY_1H, anim::READY_UNARMED});
+        case 13: // Fist weapon
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_FIST_1H, anim::READY_FIST, anim::READY_1H, anim::READY_UNARMED});
+        default:
+            break;
+    }
+
+    switch (equipment.inventoryType) {
+        case game::InvType::RANGED_BOW:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED});
+        case game::InvType::RANGED_GUN:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_RIFLE, anim::READY_CROSSBOW, anim::READY_BOW,
+                                                anim::READY_1H, anim::READY_UNARMED});
+        case game::InvType::THROWN:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_THROWN, anim::READY_1H, anim::READY_UNARMED});
+        case game::InvType::TWO_HAND:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_2H, anim::READY_2H_LOOSE, anim::READY_1H, anim::READY_UNARMED});
+        default:
+            return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                               {anim::READY_1H, anim::READY_UNARMED});
+    }
+}
+
+uint32_t replayPlayerCombatReadyAnimation(const GodviewRecording::Player& player,
+                                          rendering::CharacterRenderer& characterRenderer,
+                                          uint32_t instanceId) {
+    if (const auto* mainHand = findReplayEquipmentSlot(player, 15)) {
+        if (uint32_t anim = replayReadyAnimationForWeapon(*mainHand, characterRenderer, instanceId)) {
+            return anim;
+        }
+    }
+
+    if (const auto* offHand = findReplayEquipmentSlot(player, 16)) {
+        if (uint32_t anim = replayReadyAnimationForWeapon(*offHand, characterRenderer, instanceId)) {
+            return anim;
+        }
+    }
+
+    if (const auto* ranged = findReplayEquipmentSlot(player, 17)) {
+        if (uint32_t anim = replayReadyAnimationForWeapon(*ranged, characterRenderer, instanceId)) {
+            return anim;
+        }
+    }
+
+    return pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                       {rendering::anim::READY_UNARMED,
+                                        rendering::anim::READY_1H,
+                                        rendering::anim::STAND});
+}
+
 uint32_t replayPlayerAnimation(const GodviewRecording::Player& player,
                                bool moving,
                                bool mounted,
@@ -87,13 +190,44 @@ uint32_t replayPlayerAnimation(const GodviewRecording::Player& player,
         return rendering::anim::MOUNT;
     }
 
-    uint32_t anim = moving ? rendering::anim::RUN
-                           : (player.combat ? rendering::anim::READY_UNARMED
-                                            : rendering::anim::STAND);
-    if (!characterRenderer.hasAnimation(instanceId, anim)) {
-        anim = moving ? rendering::anim::RUN : rendering::anim::STAND;
+    if (moving) {
+        if (characterRenderer.hasAnimation(instanceId, rendering::anim::RUN)) {
+            return rendering::anim::RUN;
+        }
+        return rendering::anim::STAND;
     }
-    return anim;
+
+    if (player.combat) {
+        return replayPlayerCombatReadyAnimation(player, characterRenderer, instanceId);
+    }
+
+    return rendering::anim::STAND;
+}
+
+uint32_t replayCreatureAnimation(const GodviewRecording::Creature& creature,
+                                 bool moving,
+                                 rendering::CharacterRenderer& characterRenderer,
+                                 uint32_t instanceId) {
+    if (moving) {
+        if (characterRenderer.hasAnimation(instanceId, rendering::anim::RUN)) {
+            return rendering::anim::RUN;
+        }
+        return rendering::anim::STAND;
+    }
+
+    if (!creature.combat) {
+        return rendering::anim::STAND;
+    }
+
+    if (uint32_t anim = pickFirstAvailableAnimation(characterRenderer, instanceId,
+                                                   {rendering::anim::READY_UNARMED,
+                                                    rendering::anim::READY_1H,
+                                                    rendering::anim::COMBAT_WOUND,
+                                                    rendering::anim::STAND_WOUND,
+                                                    rendering::anim::STAND})) {
+        return anim;
+    }
+    return rendering::anim::STAND;
 }
 
 float replayMountRiderZOffset(rendering::CharacterRenderer& characterRenderer,
@@ -255,8 +389,11 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     activePlayerGuids_.clear();
     activeCreatureGuids_.clear();
     lastMoving_.clear();
+    lastPlayerCombat_.clear();
     lastPlayerMounted_.clear();
     lastCreatureMoving_.clear();
+    lastCreatureCombat_.clear();
+    lastCreatureDead_.clear();
     lastMountMoving_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
@@ -311,8 +448,11 @@ void GodviewReplay::start() {
     activePlayerGuids_.clear();
     activeCreatureGuids_.clear();
     lastMoving_.clear();
+    lastPlayerCombat_.clear();
     lastPlayerMounted_.clear();
     lastCreatureMoving_.clear();
+    lastCreatureCombat_.clear();
+    lastCreatureDead_.clear();
     lastMountMoving_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
@@ -738,6 +878,8 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
             if (displayIt != displayOverridePlayerDisplayIds_.end() && displayIt->second != playerDisplayId) {
                 entitySpawner.despawnCreature(player.guid);
                 lastMoving_.erase(player.guid);
+                lastPlayerCombat_.erase(player.guid);
+                lastPlayerMounted_.erase(player.guid);
                 needsDisplayRespawn = true;
             }
             displayOverridePlayerDisplayIds_[player.guid] = playerDisplayId;
@@ -765,6 +907,8 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
             entitySpawner.despawnCreature(player.guid);
             displayOverridePlayerDisplayIds_.erase(player.guid);
             lastMoving_.erase(player.guid);
+            lastPlayerCombat_.erase(player.guid);
+            lastPlayerMounted_.erase(player.guid);
         }
 
         if (!entitySpawner.isPlayerSpawned(player.guid) && !entitySpawner.isPlayerPending(player.guid)) {
@@ -889,6 +1033,7 @@ void GodviewReplay::despawnMissingPlayers(game::GameHandler& gameHandler,
         }
         gameHandler.getEntityManager().removeEntity(guid);
         lastMoving_.erase(guid);
+        lastPlayerCombat_.erase(guid);
         lastPlayerMounted_.erase(guid);
         lastPlayerEquipmentHash_.erase(guid);
         despawnReplayMount(entitySpawner, guid);
@@ -907,6 +1052,8 @@ void GodviewReplay::despawnMissingCreatures(game::GameHandler& gameHandler,
         entitySpawner.despawnCreature(guid);
         gameHandler.getEntityManager().removeEntity(guid);
         lastCreatureMoving_.erase(guid);
+        lastCreatureCombat_.erase(guid);
+        lastCreatureDead_.erase(guid);
     }
 }
 
@@ -973,13 +1120,16 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
 
         const bool moving = sampled.moving;
         auto lastIt = lastMoving_.find(player.guid);
+        auto lastCombatIt = lastPlayerCombat_.find(player.guid);
         auto lastMountedIt = lastPlayerMounted_.find(player.guid);
         bool stateChanged = (lastIt == lastMoving_.end() || lastIt->second != moving) ||
+                            (lastCombatIt == lastPlayerCombat_.end() || lastCombatIt->second != player.combat) ||
                             (lastMountedIt == lastPlayerMounted_.end() || lastMountedIt->second != mounted);
         if (stateChanged) {
             uint32_t anim = replayPlayerAnimation(player, moving, mounted, *charRenderer, instanceId);
             charRenderer->playAnimation(instanceId, anim, true);
             lastMoving_[player.guid] = moving;
+            lastPlayerCombat_[player.guid] = player.combat;
             lastPlayerMounted_[player.guid] = mounted;
         }
 
@@ -1022,21 +1172,24 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
                 charRenderer->playAnimation(instanceId, deathAnim, false);
             }
             lastCreatureMoving_[creature.guid] = false;
+            lastCreatureCombat_[creature.guid] = creature.combat;
+            lastCreatureDead_[creature.guid] = true;
             continue;
         }
 
         const bool moving = sampled.moving;
         auto lastIt = lastCreatureMoving_.find(creature.guid);
-        bool stateChanged = (lastIt == lastCreatureMoving_.end() || lastIt->second != moving);
+        auto lastCombatIt = lastCreatureCombat_.find(creature.guid);
+        auto lastDeadIt = lastCreatureDead_.find(creature.guid);
+        bool stateChanged = (lastIt == lastCreatureMoving_.end() || lastIt->second != moving) ||
+                            (lastCombatIt == lastCreatureCombat_.end() || lastCombatIt->second != creature.combat) ||
+                            (lastDeadIt == lastCreatureDead_.end() || lastDeadIt->second != false);
         if (stateChanged) {
-            uint32_t anim = moving ? rendering::anim::RUN
-                                   : (creature.combat ? rendering::anim::READY_UNARMED
-                                                      : rendering::anim::STAND);
-            if (!charRenderer->hasAnimation(instanceId, anim)) {
-                anim = moving ? rendering::anim::RUN : rendering::anim::STAND;
-            }
+            uint32_t anim = replayCreatureAnimation(creature, moving, *charRenderer, instanceId);
             charRenderer->playAnimation(instanceId, anim, true);
             lastCreatureMoving_[creature.guid] = moving;
+            lastCreatureCombat_[creature.guid] = creature.combat;
+            lastCreatureDead_[creature.guid] = false;
         }
     }
 }

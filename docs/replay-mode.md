@@ -244,9 +244,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   not cut across clean god-view captures.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
-- Uses run animation while interpolated movement is nonzero, unarmed-ready while
-  idle in combat when available, stand otherwise, and death animation when a
-  creature snapshot is marked dead.
+- Uses run animation while interpolated movement is nonzero, recorded weapon
+  equipment to pick a player combat-ready pose when idle in combat, stand
+  otherwise, and death animation when a creature snapshot is marked dead.
 
 ## Validation
 

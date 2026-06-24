@@ -108,8 +108,11 @@ private:
     std::unordered_set<uint64_t> activePlayerGuids_;
     std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;
+    std::unordered_map<uint64_t, bool> lastPlayerCombat_;
     std::unordered_map<uint64_t, bool> lastPlayerMounted_;
     std::unordered_map<uint64_t, bool> lastCreatureMoving_;
+    std::unordered_map<uint64_t, bool> lastCreatureCombat_;
+    std::unordered_map<uint64_t, bool> lastCreatureDead_;
     std::unordered_map<uint64_t, bool> lastMountMoving_;
     std::unordered_map<uint64_t, size_t> lastPlayerEquipmentHash_;
     std::unordered_set<uint64_t> displayOverridePlayerGuids_;
