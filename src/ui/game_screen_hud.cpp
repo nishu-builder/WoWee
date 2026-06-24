@@ -1147,65 +1147,68 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
             ImVec2 targetScreen;
             if (projectToScreen(targetRenderPos, targetScreen)) {
-                ImU32 lineColor = recordedCombat
-                    ? IM_COL32(120, 240, 255, A(245))
-                    : IM_COL32(255, 215, 95, A(225));
-                ImU32 lineShadow = IM_COL32(0, 0, 0, A(135));
-                ImVec2 lineStart(sx, sy + barH * 0.5f);
                 const float scale = settingsPanel_.nameplateScale_;
-                drawList->AddLine(lineStart, targetScreen, lineShadow, 4.0f * scale);
-                drawList->AddLine(lineStart, targetScreen, lineColor, 2.4f * scale);
+                ImVec2 lineStart(sx, sy + barH * 0.5f);
                 float dx = targetScreen.x - lineStart.x;
                 float dy = targetScreen.y - lineStart.y;
                 float len = std::sqrt(dx * dx + dy * dy);
-                if (len > 8.0f * scale) {
-                    float ux = dx / len;
-                    float uy = dy / len;
-                    ImVec2 arrowBase(targetScreen.x - ux * 10.0f * scale,
-                                      targetScreen.y - uy * 10.0f * scale);
-                    ImVec2 perp(-uy * 5.0f * scale, ux * 5.0f * scale);
-                    drawList->AddTriangleFilled(
-                        targetScreen,
-                        ImVec2(arrowBase.x + perp.x, arrowBase.y + perp.y),
-                        ImVec2(arrowBase.x - perp.x, arrowBase.y - perp.y),
-                        lineShadow);
-                    ImVec2 innerBase(targetScreen.x - ux * 8.0f * scale,
-                                     targetScreen.y - uy * 8.0f * scale);
-                    ImVec2 innerPerp(-uy * 3.4f * scale, ux * 3.4f * scale);
-                    drawList->AddTriangleFilled(
-                        targetScreen,
-                        ImVec2(innerBase.x + innerPerp.x, innerBase.y + innerPerp.y),
-                        ImVec2(innerBase.x - innerPerp.x, innerBase.y - innerPerp.y),
-                        lineColor);
+                const float maxTetherLength = (isPlayer ? 620.0f : 280.0f) * scale;
+                if (len <= maxTetherLength) {
+                    ImU32 lineColor = recordedCombat
+                        ? IM_COL32(120, 240, 255, A(245))
+                        : IM_COL32(255, 215, 95, A(225));
+                    ImU32 lineShadow = IM_COL32(0, 0, 0, A(135));
+                    drawList->AddLine(lineStart, targetScreen, lineShadow, 4.0f * scale);
+                    drawList->AddLine(lineStart, targetScreen, lineColor, 2.4f * scale);
+                    if (len > 8.0f * scale) {
+                        float ux = dx / len;
+                        float uy = dy / len;
+                        ImVec2 arrowBase(targetScreen.x - ux * 10.0f * scale,
+                                          targetScreen.y - uy * 10.0f * scale);
+                        ImVec2 perp(-uy * 5.0f * scale, ux * 5.0f * scale);
+                        drawList->AddTriangleFilled(
+                            targetScreen,
+                            ImVec2(arrowBase.x + perp.x, arrowBase.y + perp.y),
+                            ImVec2(arrowBase.x - perp.x, arrowBase.y - perp.y),
+                            lineShadow);
+                        ImVec2 innerBase(targetScreen.x - ux * 8.0f * scale,
+                                         targetScreen.y - uy * 8.0f * scale);
+                        ImVec2 innerPerp(-uy * 3.4f * scale, ux * 3.4f * scale);
+                        drawList->AddTriangleFilled(
+                            targetScreen,
+                            ImVec2(innerBase.x + innerPerp.x, innerBase.y + innerPerp.y),
+                            ImVec2(innerBase.x - innerPerp.x, innerBase.y - innerPerp.y),
+                            lineColor);
+                    }
+                    const float ringRadius = 9.0f * scale;
+                    const float tickRadius = 14.0f * scale;
+                    drawList->AddCircle(targetScreen, ringRadius, lineShadow, 20, 4.0f * scale);
+                    drawList->AddCircle(targetScreen, ringRadius, lineColor, 20, 2.0f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
+                                      ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
+                                      lineShadow, 3.0f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
+                                      ImVec2(targetScreen.x + tickRadius, targetScreen.y),
+                                      lineShadow, 3.0f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
+                                      ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
+                                      lineShadow, 3.0f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
+                                      ImVec2(targetScreen.x, targetScreen.y + tickRadius),
+                                      lineShadow, 3.0f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
+                                      ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
+                                      lineColor, 1.6f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
+                                      ImVec2(targetScreen.x + tickRadius, targetScreen.y),
+                                      lineColor, 1.6f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
+                                      ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
+                                      lineColor, 1.6f * scale);
+                    drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
+                                      ImVec2(targetScreen.x, targetScreen.y + tickRadius),
+                                      lineColor, 1.6f * scale);
                 }
-                const float ringRadius = 9.0f * scale;
-                const float tickRadius = 14.0f * scale;
-                drawList->AddCircle(targetScreen, ringRadius, lineShadow, 20, 4.0f * scale);
-                drawList->AddCircle(targetScreen, ringRadius, lineColor, 20, 2.0f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
-                                  ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
-                                  lineShadow, 3.0f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
-                                  ImVec2(targetScreen.x + tickRadius, targetScreen.y),
-                                  lineShadow, 3.0f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
-                                  ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
-                                  lineShadow, 3.0f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
-                                  ImVec2(targetScreen.x, targetScreen.y + tickRadius),
-                                  lineShadow, 3.0f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
-                                  ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
-                                  lineColor, 1.6f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
-                                  ImVec2(targetScreen.x + tickRadius, targetScreen.y),
-                                  lineColor, 1.6f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
-                                  ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
-                                  lineColor, 1.6f * scale);
-                drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
-                                  ImVec2(targetScreen.x, targetScreen.y + tickRadius),
-                                  lineColor, 1.6f * scale);
             }
         }
 
@@ -1491,15 +1494,40 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             if (!subLabel.empty()) subLabel += "  ";
             subLabel += "target: " + targetName;
         }
+        ImVec2 subSize(0.0f, 0.0f);
+        if (!subLabel.empty()) {
+            subSize = ImGui::CalcTextSize(subLabel.c_str());
+        }
         if (!subLabel.empty()) nameY -= 10.0f;  // shift name up for sub-label line
+
+        if (offlineReplay) {
+            float labelW = std::max(textSize.x, subSize.x);
+            float labelH = textSize.y;
+            if (!subLabel.empty()) {
+                labelH += subSize.y + 1.0f;
+            }
+            const float padX = 4.0f * settingsPanel_.nameplateScale_;
+            const float padY = 2.0f * settingsPanel_.nameplateScale_;
+            const float bgX = sx - labelW * 0.5f - padX;
+            const float bgY = nameY - padY;
+            drawList->AddRectFilled(
+                ImVec2(bgX, bgY),
+                ImVec2(bgX + labelW + padX * 2.0f, bgY + labelH + padY * 2.0f),
+                IM_COL32(4, 6, 8, A(105)),
+                2.0f);
+            drawList->AddRect(
+                ImVec2(bgX, bgY),
+                ImVec2(bgX + labelW + padX * 2.0f, bgY + labelH + padY * 2.0f),
+                IM_COL32(255, 255, 255, A(35)),
+                2.0f);
+        }
 
         drawList->AddText(ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
         drawList->AddText(ImVec2(nameX,         nameY),         nameColor, labelBuf);
 
         // Sub-label below the name (WoW-style <Guild Name> or <NPC Title> in lighter color)
         if (!subLabel.empty()) {
-            ImVec2 subSz = ImGui::CalcTextSize(subLabel.c_str());
-            float subX = sx - subSz.x * 0.5f;
+            float subX = sx - subSize.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
             drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
             drawList->AddText(ImVec2(subX,         subY),         IM_COL32(180, 180, 180, A(200)), subLabel.c_str());

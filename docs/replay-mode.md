@@ -190,6 +190,8 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Forces offline replay nameplates on for recorded players, keeps player labels
   visible from the high observer camera, and limits default creature labels to
   selected, combat, or target-bearing units so dense captures remain readable.
+- Adds a compact replay-only backing behind name/sub-label text so labels remain
+  legible in god-view screenshots over bright terrain.
 - Marks replay nameplates with a red border and compact `combat` sublabel when
   the recording says the unit is in combat.
 - Marks replay nameplates with an orange border and a compact `target: Name`
@@ -202,6 +204,8 @@ Replay mode now uses Coworld v2 identity fields when available:
   reticle, and high-contrast combat color between visible target-bearing units
   and their current target so god-view captures show engagement relationships at
   a glance.
+- Caps very long creature-source tethers so distant incidental target links do
+  not cut across clean god-view captures.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
 - Uses run animation while interpolated movement is nonzero, unarmed-ready while
