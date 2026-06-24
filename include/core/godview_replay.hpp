@@ -101,6 +101,8 @@ private:
     std::unordered_map<uint64_t, bool> lastMoving_;
     std::unordered_map<uint64_t, bool> lastCreatureMoving_;
     std::unordered_map<uint64_t, size_t> lastPlayerEquipmentHash_;
+    std::unordered_set<uint64_t> displayOverridePlayerGuids_;
+    std::unordered_map<uint64_t, uint32_t> displayOverridePlayerDisplayIds_;
 };
 
 } // namespace core
