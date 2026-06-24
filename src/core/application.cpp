@@ -2432,9 +2432,10 @@ bool Application::startReplayMode() {
                     if (end != screenshotMs && ms >= 0.0) {
                         double startMs = static_cast<double>(replay_->startMs());
                         double endMs = static_cast<double>(replay_->endMs());
-                        replayScreenshotTargetMs_ = (ms >= startMs && ms <= endMs)
+                        double targetMs = (ms >= startMs && ms <= endMs)
                             ? ms
                             : startMs + ms;
+                        replayScreenshotTargetMs_ = std::clamp(targetMs, startMs, endMs);
                         LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
                                  " at replay +",
                                  (replayScreenshotTargetMs_ - startMs), "ms");
