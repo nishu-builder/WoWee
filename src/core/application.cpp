@@ -2364,20 +2364,48 @@ void Application::applyReplayCameraFollow(float deltaTime) {
     if (!focus) {
         replayCameraFollowPosition_.reset();
         replayCameraFollowGuid_ = 0;
+        replayCameraFollowTargetGuid_ = 0;
         return;
     }
 
     glm::vec3 pivot = focus->renderPosition + glm::vec3(0.0f, 0.0f, 2.0f);
-    constexpr float kBackDistance = 38.0f;
-    constexpr float kHeight = 48.0f;
-    glm::vec3 desired = pivot + glm::vec3(0.0f, -kBackDistance, kHeight);
+    glm::vec2 viewBack(0.0f, -1.0f);
+    float backDistance = 38.0f;
+    float height = 48.0f;
+    uint64_t targetGuid = 0;
+
+    if (focus->hasTarget) {
+        targetGuid = focus->targetGuid;
+        glm::vec3 targetPivot = focus->targetRenderPosition + glm::vec3(0.0f, 0.0f, 2.0f);
+        glm::vec2 relation(targetPivot.x - pivot.x, targetPivot.y - pivot.y);
+        float span = glm::length(relation);
+        pivot = (pivot + targetPivot) * 0.5f;
+        backDistance = std::clamp(38.0f + span * 0.55f, 38.0f, 120.0f);
+        height = std::clamp(48.0f + span * 0.35f, 48.0f, 96.0f);
+
+        if (span > 1.0f) {
+            glm::vec2 pairDir = relation / span;
+            viewBack = glm::normalize(glm::vec2(-pairDir.y, pairDir.x));
+            if (glm::dot(viewBack, glm::vec2(0.0f, -1.0f)) < 0.0f) {
+                viewBack = -viewBack;
+            }
+        }
+    }
+
+    glm::vec3 desired = pivot + glm::vec3(viewBack.x * backDistance,
+                                          viewBack.y * backDistance,
+                                          height);
     if (!std::isfinite(desired.x) || !std::isfinite(desired.y) || !std::isfinite(desired.z)) {
         return;
     }
 
-    if (!replayCameraFollowPosition_ || replayCameraFollowGuid_ != focus->guid || deltaTime <= 0.0f) {
+    if (!replayCameraFollowPosition_ ||
+        replayCameraFollowGuid_ != focus->guid ||
+        replayCameraFollowTargetGuid_ != targetGuid ||
+        deltaTime <= 0.0f) {
         replayCameraFollowPosition_ = desired;
         replayCameraFollowGuid_ = focus->guid;
+        replayCameraFollowTargetGuid_ = targetGuid;
     } else {
         float alpha = 1.0f - std::exp(-10.0f * std::max(0.0f, deltaTime));
         replayCameraFollowPosition_ =

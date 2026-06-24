@@ -32,6 +32,10 @@ public:
         uint64_t guid = 0;
         std::string name;
         glm::vec3 renderPosition{0.0f};
+        bool hasTarget = false;
+        uint64_t targetGuid = 0;
+        std::string targetName;
+        glm::vec3 targetRenderPosition{0.0f};
     };
 
     bool load(const std::string& path, std::string& error);
