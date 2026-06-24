@@ -183,14 +183,31 @@ Local validation completed:
   streaming, Elwynn zone entry, human/orc model composition, free-fly camera, and
   replay main loop entry.
 
-No real `godview_*.jsonl` recording was present under the local Coworld checkout
-or the running Coworld container at validation time; the container only had a
-packet log in `/coworld-captures`. Phase-4 validation against a realm-captured
-recording should use:
+Realm-generated Coworld validation completed with a recorder-enabled VMaNGOS
+container from current `coworld-vanilla-wow` patches:
+
+- Recording:
+  `/Users/nishadsingh/repos/wow/coworld-vanilla-wow/local_data/godview-proof/captures/godview_1782281379.jsonl`.
+- Coworld inspector:
+  `snapshots=45`, `maps=[1]`, `distinct players=1`, `ms-clock span=23710 ms`,
+  `Replayhunt` moved `103.6` yards.
+- First snapshot:
+  map `1`, race `2`, class `7`, position
+  `(-619.744812, -4252.344238, 40.591400)`.
+- Last snapshot:
+  position `(-686.551880, -4267.936523, 40.276199)`, target `7975`.
+- WoWee runtime replay:
+  `Godview replay active map: 1`, `Starting replay mode: map=1 firstPlayer=Replayhunt`,
+  `Loading online world terrain for map 'Kalimdor' (ID 1)`,
+  `Online terrain streaming complete: 49 tiles loaded`,
+  `Free-fly camera enabled`, `Composite: base layer ... OrcMaleSkin00_01.blp`,
+  `Replay mode ready`, and terrain diagnostics near the recorded coordinates.
+
+Commands used for real-recording validation:
 
 ```bash
-python -m backend.vmangos.replay.inspect_godview --latest ./local_data/coworld-captures
-WOW_DATA_PATH=/path/to/wowee-data-classic ./build/bin/wowee --replay ./local_data/coworld-captures/godview_<timestamp>.jsonl
+uv run python -m backend.vmangos.replay.inspect_godview --latest ./local_data/godview-proof/captures
+WOW_DATA_PATH=/Users/nishadsingh/repos/wow/wowee-data-classic ./build/bin/wowee --replay /Users/nishadsingh/repos/wow/coworld-vanilla-wow/local_data/godview-proof/captures/godview_1782281379.jsonl
 ```
 
 A macOS `screencapture` attempt produced the desktop background rather than the
