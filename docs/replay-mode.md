@@ -153,13 +153,15 @@ behavior remains behind the existing non-replay path.
 
 - Space: play/pause.
 - Left/Right: scrub 5 seconds; hold Shift for 30 seconds.
+- Comma/Period: jump to the previous/next target-or-combat snapshot.
 - Home/End: jump to recording start/end.
 - `[` / `]`: decrease/increase replay speed.
 - `H`: hide/show the compact replay overlay.
 - `F`: toggle the replay follow camera for the focused recorded player.
 - `Tab` / Shift+`Tab`: focus the next/previous recorded player and enable the
   follow camera.
-- Overlay: play/pause buttons, start/end buttons, time slider, and speed slider.
+- Overlay: play/pause buttons, start/end buttons, event buttons, time slider,
+  and speed slider.
 - Camera: WoWee free-fly observer controls, with WoW movement speed disabled.
 - UI: offline replay keeps nameplates, minimap markers, chat bubbles, and the
   compact replay overlay, but suppresses normal gameplay panels such as player
@@ -193,6 +195,9 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Can lock the observer camera to a recorded player from the replay overlay,
   `F`/`Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
   deterministic inspection captures.
+- Can start at the first target-or-combat snapshot with
+  `WOWEE_REPLAY_START_EVENT=1`, which is useful for automated screenshot smokes
+  that should land on action without hardcoding a timestamp.
 - When the focused player has a recorded target that is also present in the
   sampled frame, the follow camera frames the player-target midpoint and backs
   out far enough to keep the engagement readable.

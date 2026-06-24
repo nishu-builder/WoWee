@@ -2478,6 +2478,12 @@ bool Application::startReplayMode() {
     replay_->start();
     replayCameraFollowPosition_.reset();
     replayCameraFollowGuid_ = 0;
+    replayCameraFollowTargetGuid_ = 0;
+    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false)) {
+        if (!replay_->seekTargetOrCombatEvent(1, true)) {
+            LOG_WARNING("Replay start event requested, but no target/combat snapshot was found");
+        }
+    }
     if (const char* focusPlayer = std::getenv("WOWEE_REPLAY_FOCUS_PLAYER")) {
         if (*focusPlayer) {
             if (replay_->focusPlayerByQuery(focusPlayer)) {
