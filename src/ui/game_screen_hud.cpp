@@ -50,6 +50,7 @@
 #include <chrono>
 #include <ctime>
 
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
@@ -940,6 +941,19 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     }
 
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    std::unordered_set<uint64_t> replayTargetedGuids;
+    std::unordered_map<uint64_t, uint64_t> replayTargetSourceGuids;
+    if (offlineReplay) {
+        for (const auto& entry : gameHandler.getEntityManager().getEntities()) {
+            const auto& entityPtr = entry.second;
+            if (!entityPtr || !entityPtr->isUnit()) continue;
+            uint64_t target = getUnitTargetGuid(*entityPtr);
+            if (target != 0) {
+                replayTargetedGuids.insert(target);
+                replayTargetSourceGuids.emplace(target, entry.first);
+            }
+        }
+    }
 
     for (const auto& [guid, entityPtr] : gameHandler.getEntityManager().getEntities()) {
         if (!entityPtr) continue;
@@ -958,19 +972,20 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ? gameHandler.getEntityManager().getEntity(unitTargetGuid)
             : nullptr;
         const bool recordedCombat = offlineReplay && unit->isRecordedCombat() && !isCorpse;
+        const bool isReplayTargeted = offlineReplay && replayTargetedGuids.count(guid) != 0;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer) {
             if (offlineReplay) {
-                if (!isTarget && unitTargetGuid == 0 && !recordedCombat) continue;
+                if (!isTarget && unitTargetGuid == 0 && !recordedCombat && !isReplayTargeted) continue;
             } else if (!showNameplates_) {
                 continue;
             }
         }
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
-        if (isCorpse && !isTarget) continue;
+        if (isCorpse && !isTarget && !isReplayTargeted) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
@@ -994,6 +1009,42 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (!projectToScreen(renderPos, screenPos)) continue;
         float sx = screenPos.x;
         float sy = screenPos.y;
+        if (offlineReplay && isReplayTargeted && !isPlayer) {
+            auto sourceIt = replayTargetSourceGuids.find(guid);
+            auto sourceEntity = (sourceIt != replayTargetSourceGuids.end())
+                ? gameHandler.getEntityManager().getEntity(sourceIt->second)
+                : nullptr;
+            if (sourceEntity && sourceEntity->isUnit()) {
+                auto* sourceUnit = static_cast<game::Unit*>(sourceEntity.get());
+                glm::vec3 sourceRenderPos;
+                if (!core::Application::getInstance().getRenderPositionForGuid(sourceIt->second, sourceRenderPos)) {
+                    sourceRenderPos = core::coords::canonicalToRender(
+                        glm::vec3(sourceUnit->getX(), sourceUnit->getY(), sourceUnit->getZ()));
+                }
+                sourceRenderPos.z += 2.3f;
+
+                ImVec2 sourceScreen;
+                if (projectToScreen(sourceRenderPos, sourceScreen)) {
+                    float dx = sx - sourceScreen.x;
+                    float dy = sy - sourceScreen.y;
+                    float len = std::sqrt(dx * dx + dy * dy);
+                    const float minSeparation = 74.0f * settingsPanel_.nameplateScale_;
+                    if (len < minSeparation) {
+                        if (len < 1.0f) {
+                            dx = 0.65f;
+                            dy = 0.76f;
+                            len = 1.0f;
+                        }
+                        float push = minSeparation - len;
+                        sx += (dx / len) * push;
+                        sy += (dy / len) * push;
+                    }
+                }
+            }
+            const float screenPad = 12.0f;
+            sx = std::clamp(sx, screenPad, screenW - screenPad);
+            sy = std::clamp(sy, screenPad, screenH - screenPad);
+        }
 
         // Fade out in the last 5 units of cull range
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
@@ -1052,6 +1103,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         ImU32 borderColor = IM_COL32(20, 20, 20, A(180));
         if (recordedCombat) {
             borderColor = IM_COL32(255, 70, 70, A(230));
+        }
+        if (isReplayTargeted) {
+            borderColor = IM_COL32(120, 240, 255, A(230));
         }
         if (hasRecordedTarget) {
             borderColor = IM_COL32(255, 110, 45, A(230));
@@ -1424,6 +1478,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (recordedCombat) {
             if (!subLabel.empty()) subLabel += "  ";
             subLabel += "combat";
+        }
+        if (isReplayTargeted) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "targeted";
         }
         if (hasRecordedTarget) {
             std::string targetName = recordedTargetEntity ? getEntityName(recordedTargetEntity) : "target";
