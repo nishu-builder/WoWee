@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 
@@ -160,6 +161,28 @@ void buildEquipmentArrays(const GodviewRecording::Player& player,
     }
 }
 
+std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+bool playerMatchesFocusQuery(const GodviewRecording::Player& player,
+                             const std::string& rawQuery,
+                             const std::string& loweredQuery,
+                             bool allowSubstring) {
+    if (rawQuery == std::to_string(player.guid) || player.rawGuid == rawQuery) {
+        return true;
+    }
+
+    std::string loweredName = lowerAscii(player.name);
+    if (allowSubstring) {
+        return loweredName.find(loweredQuery) != std::string::npos;
+    }
+    return loweredName == loweredQuery;
+}
+
 } // namespace
 
 bool GodviewReplay::load(const std::string& path, std::string& error) {
@@ -186,6 +209,8 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     currentMs_ = static_cast<double>(startMs_);
     speed_ = 1.0f;
     paused_ = false;
+    cameraFollowEnabled_ = false;
+    focusedPlayerGuid_ = 0;
 
     LOG_INFO("Godview replay active map: ", mapId_,
              " snapshots=", recording_.snapshotCountForMap(mapId_),
@@ -221,6 +246,121 @@ void GodviewReplay::setCurrentMs(double value) {
         return;
     }
     currentMs_ = std::clamp(value, static_cast<double>(startMs_), static_cast<double>(endMs_));
+}
+
+void GodviewReplay::setCameraFollowEnabled(bool enabled) {
+    cameraFollowEnabled_ = enabled;
+    if (cameraFollowEnabled_ && focusedPlayerGuid_ == 0) {
+        focusNextPlayer(1);
+    }
+}
+
+void GodviewReplay::focusNextPlayer(int direction) {
+    auto players = recording_.samplePlayers(currentMs_, mapId_);
+    if (players.empty()) {
+        focusedPlayerGuid_ = 0;
+        cameraFollowEnabled_ = false;
+        return;
+    }
+
+    size_t index = 0;
+    bool foundCurrent = false;
+    for (size_t i = 0; i < players.size(); ++i) {
+        if (players[i].player.guid == focusedPlayerGuid_) {
+            index = i;
+            foundCurrent = true;
+            break;
+        }
+    }
+
+    if (foundCurrent) {
+        const int count = static_cast<int>(players.size());
+        int next = static_cast<int>(index) + (direction < 0 ? -1 : 1);
+        next = (next % count + count) % count;
+        index = static_cast<size_t>(next);
+    } else if (direction < 0) {
+        index = players.size() - 1;
+    }
+
+    focusedPlayerGuid_ = players[index].player.guid;
+    cameraFollowEnabled_ = true;
+    LOG_INFO("Replay camera focus: ", players[index].player.name,
+             " guid=", players[index].player.rawGuid.empty()
+                ? std::to_string(players[index].player.guid)
+                : players[index].player.rawGuid);
+}
+
+bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
+    std::string loweredQuery = lowerAscii(query);
+    if (loweredQuery.empty() || loweredQuery == "first") {
+        focusNextPlayer(1);
+        return focusedPlayerGuid_ != 0;
+    }
+
+    for (bool allowSubstring : {false, true}) {
+        for (const auto& snapshot : recording_.snapshots()) {
+            if (snapshot.map != mapId_) continue;
+            for (const auto& player : snapshot.players) {
+                if (!playerMatchesFocusQuery(player, query, loweredQuery, allowSubstring)) {
+                    continue;
+                }
+                focusedPlayerGuid_ = player.guid;
+                LOG_INFO("Replay camera focus: ", player.name,
+                         " guid=", player.rawGuid.empty()
+                            ? std::to_string(player.guid)
+                            : player.rawGuid);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget() const {
+    if (!cameraFollowEnabled_) return std::nullopt;
+
+    auto players = recording_.samplePlayers(currentMs_, mapId_);
+    if (players.empty()) return std::nullopt;
+
+    const InterpolatedPlayer* selected = nullptr;
+    if (focusedPlayerGuid_ != 0) {
+        for (const auto& player : players) {
+            if (player.player.guid == focusedPlayerGuid_) {
+                selected = &player;
+                break;
+            }
+        }
+    }
+    if (!selected) selected = &players.front();
+
+    glm::vec3 canonical = coords::serverToCanonical(
+        glm::vec3(selected->player.x, selected->player.y, selected->player.z));
+    CameraFocusTarget target;
+    target.guid = selected->player.guid;
+    target.name = selected->player.name;
+    target.renderPosition = coords::canonicalToRender(canonical);
+    return target;
+}
+
+std::string GodviewReplay::focusedPlayerName() const {
+    if (focusedPlayerGuid_ == 0) return {};
+
+    auto players = recording_.samplePlayers(currentMs_, mapId_);
+    for (const auto& player : players) {
+        if (player.player.guid == focusedPlayerGuid_) {
+            return player.player.name;
+        }
+    }
+
+    for (const auto& snapshot : recording_.snapshots()) {
+        if (snapshot.map != mapId_) continue;
+        auto it = snapshot.playerByGuid.find(focusedPlayerGuid_);
+        if (it != snapshot.playerByGuid.end()) {
+            return snapshot.players[it->second].name;
+        }
+    }
+    return {};
 }
 
 void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
@@ -534,6 +674,12 @@ void GodviewReplay::handleKeyDown(const SDL_KeyboardEvent& event) {
         case SDL_SCANCODE_H:
             overlayVisible_ = !overlayVisible_;
             break;
+        case SDL_SCANCODE_F:
+            setCameraFollowEnabled(!cameraFollowEnabled_);
+            break;
+        case SDL_SCANCODE_TAB:
+            focusNextPlayer((event.keysym.mod & KMOD_SHIFT) ? -1 : 1);
+            break;
         default:
             break;
     }
@@ -544,7 +690,7 @@ void GodviewReplay::renderOverlay() {
 
     ImGui::SetNextWindowBgAlpha(0.78f);
     ImGui::SetNextWindowPos(ImVec2(14.0f, 14.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 0.0f), ImVec2(520.0f, 280.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 0.0f), ImVec2(560.0f, 340.0f));
     ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize |
                              ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoSavedSettings;
@@ -588,6 +734,27 @@ void GodviewReplay::renderOverlay() {
     }
     if (ImGui::SliderFloat("Speed", &speed_, 0.125f, 16.0f, "%.3gx", ImGuiSliderFlags_Logarithmic)) {
         speed_ = std::clamp(speed_, 0.125f, 16.0f);
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button(cameraFollowEnabled_ ? "Free camera" : "Follow player")) {
+        setCameraFollowEnabled(!cameraFollowEnabled_);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("< Player")) {
+        focusNextPlayer(-1);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Player >")) {
+        focusNextPlayer(1);
+    }
+    std::string focusName = focusedPlayerName();
+    if (cameraFollowEnabled_) {
+        ImGui::Text("Camera following: %s", focusName.empty() ? "first active player" : focusName.c_str());
+    } else if (!focusName.empty()) {
+        ImGui::Text("Camera focus: %s", focusName.c_str());
+    } else {
+        ImGui::TextUnformatted("Camera: free observer");
     }
 
     auto pair = recording_.findSnapshotPair(currentMs_, mapId_);

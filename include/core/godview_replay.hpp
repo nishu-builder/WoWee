@@ -2,8 +2,10 @@
 
 #include "core/godview_recording.hpp"
 
+#include <glm/glm.hpp>
 #include <SDL2/SDL.h>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -26,6 +28,12 @@ public:
     using InterpolatedPlayer = GodviewRecording::InterpolatedPlayer;
     using InterpolatedCreature = GodviewRecording::InterpolatedCreature;
 
+    struct CameraFocusTarget {
+        uint64_t guid = 0;
+        std::string name;
+        glm::vec3 renderPosition{0.0f};
+    };
+
     bool load(const std::string& path, std::string& error);
     bool empty() const { return recording_.empty(); }
 
@@ -37,11 +45,15 @@ public:
     float speed() const { return speed_; }
     bool paused() const { return paused_; }
     bool overlayVisible() const { return overlayVisible_; }
+    bool cameraFollowEnabled() const { return cameraFollowEnabled_; }
     void setOverlayVisible(bool visible) { overlayVisible_ = visible; }
+    void setCameraFollowEnabled(bool enabled);
     size_t snapshotCount() const { return recording_.snapshotCountForMap(mapId_); }
     uint32_t mapId() const { return mapId_; }
 
     const Player* firstPlayer() const;
+    bool focusPlayerByQuery(const std::string& query);
+    std::optional<CameraFocusTarget> cameraFocusTarget() const;
 
     void start();
     void update(float deltaTime,
@@ -66,6 +78,8 @@ private:
                                  EntitySpawner& entitySpawner,
                                  const std::unordered_set<uint64_t>& activeGuids);
     void setCurrentMs(double value);
+    void focusNextPlayer(int direction);
+    std::string focusedPlayerName() const;
 
     GodviewRecording recording_;
     uint32_t mapId_ = 0;
@@ -75,6 +89,8 @@ private:
     float speed_ = 1.0f;
     bool paused_ = false;
     bool overlayVisible_ = true;
+    bool cameraFollowEnabled_ = false;
+    uint64_t focusedPlayerGuid_ = 0;
     std::unordered_set<uint64_t> activePlayerGuids_;
     std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;

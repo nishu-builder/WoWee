@@ -126,6 +126,7 @@ private:
     void render();
     void setupUICallbacks();
     bool startReplayMode();
+    void applyReplayCameraFollow(float deltaTime);
     void spawnPlayerCharacter();
     void buildFactionHostilityMap(uint8_t playerRace);
     void setupTestTransport();  // Test transport boat for development
@@ -170,6 +171,8 @@ private:
     double replayScreenshotTargetMs_ = -1.0;
     int replayScreenshotFramesRemaining_ = -1;
     bool replayScreenshotExitAfterCapture_ = false;
+    std::optional<glm::vec3> replayCameraFollowPosition_;
+    uint64_t replayCameraFollowGuid_ = 0;
 
     // Player character info (for model spawning)
     game::Race playerRace_ = game::Race::HUMAN;

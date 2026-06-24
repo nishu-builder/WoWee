@@ -156,6 +156,9 @@ behavior remains behind the existing non-replay path.
 - Home/End: jump to recording start/end.
 - `[` / `]`: decrease/increase replay speed.
 - `H`: hide/show the compact replay overlay.
+- `F`: toggle the replay follow camera for the focused recorded player.
+- `Tab` / Shift+`Tab`: focus the next/previous recorded player and enable the
+  follow camera.
 - Overlay: play/pause buttons, start/end buttons, time slider, and speed slider.
 - Camera: WoWee free-fly observer controls, with WoW movement speed disabled.
 - UI: offline replay keeps nameplates, minimap markers, chat bubbles, and the
@@ -187,6 +190,9 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Starts replay in a high observer camera centered over the first snapshot's
   recorded players and creatures, with gravity and default floor-snap disabled
   so the camera stays in a true god-view position.
+- Can lock the observer camera to a recorded player from the replay overlay,
+  `F`/`Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
+  deterministic inspection captures.
 - Forces offline replay nameplates on for recorded players, keeps player labels
   visible from the high observer camera, and limits default creature labels to
   selected, combat, or target-bearing units so dense captures remain readable.
@@ -235,6 +241,10 @@ Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
 `WOWEE_REPLAY_CLEAN_CAPTURE=1` to hide the replay overlay plus minimap chrome for
 clean captures while keeping replay nameplates and target cues visible. The replay
 overlay can also be toggled interactively with `H`.
+
+Set `WOWEE_REPLAY_FOCUS_PLAYER=first` or a recorded player name/guid to start with
+the observer camera following that player. This is useful with
+`WOWEE_REPLAY_SCREENSHOT_MS` when comparing captures across replay changes.
 
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.

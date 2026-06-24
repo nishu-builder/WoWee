@@ -2330,6 +2330,26 @@ void CameraController::teleportTo(const glm::vec3& pos) {
     LOG_INFO("Teleported to (", pos.x, ", ", pos.y, ", ", pos.z, ")");
 }
 
+void CameraController::setFreeCameraPose(const glm::vec3& pos, float yawDeg, float pitchDeg) {
+    if (!camera) return;
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z) ||
+        !std::isfinite(yawDeg) || !std::isfinite(pitchDeg)) {
+        return;
+    }
+
+    thirdPerson = false;
+    followTarget = nullptr;
+    externalFollow_ = false;
+    yaw = yawDeg;
+    facingYaw = yawDeg;
+    pitch = glm::clamp(pitchDeg, MIN_PITCH, MAX_PITCH);
+    smoothedCamPos = pos;
+    verticalVelocity = 0.0f;
+    grounded = true;
+    camera->setRotation(yaw, pitch);
+    camera->setPosition(pos);
+}
+
 void CameraController::processMouseWheel(float delta) {
     // Scale zoom speed proportionally to current distance for fine control up close
     float zoomSpeed = glm::max(userTargetDistance * 0.15f, 0.3f);

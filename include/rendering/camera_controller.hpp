@@ -48,6 +48,7 @@ public:
     void reset();
     void resetAngles();
     void teleportTo(const glm::vec3& pos);
+    void setFreeCameraPose(const glm::vec3& pos, float yawDeg, float pitchDeg);
     void setOnlineMode(bool online) { onlineMode = online; }
 
     // Last known safe position (grounded, not falling)
