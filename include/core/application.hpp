@@ -42,6 +42,11 @@ class AnimationCallbackHandler;
 class TransportCallbackHandler;
 class WorldEntryCallbackHandler;
 class UIScreenCallbackHandler;
+class GodviewReplay;
+
+struct ApplicationOptions {
+    std::string replayPath;
+};
 
 enum class AppState {
     AUTHENTICATION,
@@ -56,7 +61,7 @@ class Application {
     friend class WorldLoader;
 
 public:
-    Application();
+    explicit Application(ApplicationOptions options = {});
     ~Application();
 
     Application(const Application&) = delete;
@@ -120,11 +125,13 @@ private:
     void update(float deltaTime);
     void render();
     void setupUICallbacks();
+    bool startReplayMode();
     void spawnPlayerCharacter();
     void buildFactionHostilityMap(uint8_t playerRace);
     void setupTestTransport();  // Test transport boat for development
 
     static Application* instance;
+    ApplicationOptions options_;
 
     game::GameServices gameServices_;
     std::unique_ptr<Window> window;
@@ -142,6 +149,7 @@ private:
     std::unique_ptr<AppearanceComposer> appearanceComposer_;
     std::unique_ptr<WorldLoader> worldLoader_;
     std::unique_ptr<audio::AudioCoordinator> audioCoordinator_;
+    std::unique_ptr<GodviewReplay> replay_;
 
     // Callback handlers (extracted from setupUICallbacks)
     std::unique_ptr<NPCInteractionCallbackHandler> npcInteractionCallbacks_;

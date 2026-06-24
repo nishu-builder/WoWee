@@ -1046,10 +1046,18 @@ uint32_t GameHandler::generateClientSeed() {
 }
 
 void GameHandler::setState(WorldState newState) {
+    if (newState != WorldState::IN_WORLD) {
+        offlineReplayWorld_ = false;
+    }
     if (state != newState) {
         LOG_DEBUG("World state: ", static_cast<int>(state), " -> ", static_cast<int>(newState));
         state = newState;
     }
+}
+
+void GameHandler::enterOfflineReplayWorld() {
+    offlineReplayWorld_ = true;
+    setState(WorldState::IN_WORLD);
 }
 
 void GameHandler::fail(const std::string& reason) {

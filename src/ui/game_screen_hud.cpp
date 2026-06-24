@@ -1260,11 +1260,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         const std::string& unitName = unit->getName();
         char labelBuf[96];
         if (isPlayer) {
-            // Player nameplates: show name only (no level clutter).
+            // Normal player nameplates show name only; replay labels need level context.
             // Fall back to level as placeholder while the name query is pending.
-            if (!unitName.empty())
+            if (gameHandler.isOfflineReplayWorld() && level > 0) {
+                snprintf(labelBuf, sizeof(labelBuf), "%u %s", level,
+                         unitName.empty() ? "Player" : unitName.c_str());
+            } else if (!unitName.empty()) {
                 snprintf(labelBuf, sizeof(labelBuf), "%s", unitName.c_str());
-            else {
+            } else {
                 // Name query may be pending; request it now to ensure it gets resolved
                 gameHandler.queryPlayerName(unit->getGuid());
                 if (level > 0)

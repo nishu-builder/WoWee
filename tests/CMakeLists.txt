@@ -119,6 +119,21 @@ endif()
 add_test(NAME entity COMMAND test_entity)
 register_test_target(test_entity)
 
+# ── test_godview_recording ───────────────────────────────────
+add_executable(test_godview_recording
+    test_godview_recording.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/core/godview_recording.cpp
+)
+target_include_directories(test_godview_recording PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_godview_recording SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_godview_recording PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_godview_recording PRIVATE glm::glm)
+endif()
+add_test(NAME godview_recording COMMAND test_godview_recording)
+register_test_target(test_godview_recording)
+
 # ── test_dbc_loader ──────────────────────────────────────────
 add_executable(test_dbc_loader
     test_dbc_loader.cpp

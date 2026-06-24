@@ -499,6 +499,8 @@ set(WOWEE_SOURCES
     src/core/transport_callback_handler.cpp
     src/core/world_entry_callback_handler.cpp
     src/core/ui_screen_callback_handler.cpp
+    src/core/godview_recording.cpp
+    src/core/godview_replay.cpp
     src/core/window.cpp
     src/core/input.cpp
     src/core/logger.cpp
@@ -888,6 +890,8 @@ set(WOWEE_SOURCES
 
 set(WOWEE_HEADERS
     include/core/application.hpp
+    include/core/godview_recording.hpp
+    include/core/godview_replay.hpp
     include/core/window.hpp
     include/core/input.hpp
     include/core/logger.hpp
