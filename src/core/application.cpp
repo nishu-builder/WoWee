@@ -8,6 +8,7 @@
 #include "core/transport_callback_handler.hpp"
 #include "core/world_entry_callback_handler.hpp"
 #include "core/ui_screen_callback_handler.hpp"
+#include "core/godview_replay.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation_controller.hpp"
 #include <unordered_set>
@@ -100,7 +101,7 @@ bool envFlagEnabled(const char* key, bool defaultValue = false) {
 
 Application* Application::instance = nullptr;
 
-Application::Application() {
+Application::Application(ApplicationOptions options) : options_(std::move(options)) {
     instance = this;
 }
 
@@ -176,6 +177,14 @@ bool Application::initialize() {
 
     // Scan for available expansion profiles
     expansionRegistry_->initialize(dataPath);
+    if (!options_.replayPath.empty()) {
+        if (expansionRegistry_->setActive("classic")) {
+            LOG_INFO("Replay mode forcing active expansion profile to classic");
+        } else {
+            LOG_WARNING("Replay mode requested but classic expansion profile was not found; using active profile ",
+                        expansionRegistry_->getActiveId());
+        }
+    }
 
     // Load expansion-specific opcode table
     if (gameHandler && expansionRegistry_) {
@@ -559,7 +568,7 @@ bool Application::initialize() {
 
         // Start background preload for last-played character's world.
         // Warms the file cache so terrain tile loading is faster at Enter World.
-        {
+        if (options_.replayPath.empty()) {
             auto lastWorld = worldLoader_->loadLastWorldInfo();
             if (lastWorld.valid) {
                 worldLoader_->startWorldPreload(lastWorld.mapId, lastWorld.mapName, lastWorld.x, lastWorld.y);
@@ -573,6 +582,10 @@ bool Application::initialize() {
 
     // Set up UI callbacks
     setupUICallbacks();
+
+    if (!options_.replayPath.empty() && !startReplayMode()) {
+        return false;
+    }
 
     LOG_INFO("Application initialized successfully");
     running = true;
@@ -741,6 +754,10 @@ void Application::run() {
                     bool isFKey = (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F12);
                     if (uiHasKeyboard && !isFKey) {
                         continue;  // Let ImGui handle the keystroke
+                    }
+
+                    if (replay_) {
+                        replay_->handleKeyDown(event.key);
                     }
 
                     // F1: Toggle performance HUD
@@ -949,31 +966,31 @@ void Application::setState(AppState newState) {
             if (renderer && renderer->getCameraController()) {
                 auto* cc = renderer->getCameraController();
                 cc->setMovementCallback([this](uint32_t opcode) {
-                    if (gameHandler) {
+                    if (!replay_ && gameHandler) {
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
                     }
                 });
                 cc->setStandUpCallback([this]() {
-                    if (gameHandler) {
+                    if (!replay_ && gameHandler) {
                         gameHandler->setStandState(rendering::AnimationController::STAND_STATE_STAND);
                     }
                 });
                 cc->setSitDownCallback([this]() {
-                    if (gameHandler) {
+                    if (!replay_ && gameHandler) {
                         gameHandler->setStandState(rendering::AnimationController::STAND_STATE_SIT);
                     }
-                    if (renderer) {
+                    if (!replay_ && renderer) {
                         if (auto* ac = renderer->getAnimationController()) {
                             ac->setStandState(rendering::AnimationController::STAND_STATE_SIT);
                         }
                     }
                 });
                 cc->setAutoFollowCancelCallback([this]() {
-                    if (gameHandler) {
+                    if (!replay_ && gameHandler) {
                         gameHandler->cancelFollow();
                     }
                 });
-                cc->setUseWoWSpeed(true);
+                cc->setUseWoWSpeed(!replay_);
             }
             if (gameHandler) {
                 gameHandler->setMeleeSwingCallback([this](uint32_t spellId) {
@@ -1206,6 +1223,39 @@ void Application::update(float deltaTime) {
                     LOG_WARNING("SLOW update stage '", stageName, "': ", stageMs, "ms");
                 }
             };
+
+            if (replay_) {
+                runInGameStage("replay->update", [&] {
+                    if (gameHandler && entitySpawner_ && renderer) {
+                        replay_->update(deltaTime, *gameHandler, *entitySpawner_, *renderer);
+                    }
+                });
+                runInGameStage("world->update", [&] {
+                    if (world) {
+                        world->update(deltaTime);
+                    }
+                });
+                runInGameStage("replay spawn/equipment queues", [&] {
+                    if (entitySpawner_) entitySpawner_->update();
+                    if (gameHandler && entitySpawner_ && renderer) {
+                        replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
+                    }
+                    if (auto* cr = renderer ? renderer->getCharacterRenderer() : nullptr) {
+                        cr->processPendingNormalMaps(4);
+                    }
+                });
+                runInGameStage("replay terrain streaming", [&] {
+                    if (renderer && renderer->getTerrainManager()) {
+                        renderer->getTerrainManager()->setStreamingEnabled(true);
+                        renderer->getTerrainManager()->setUpdateInterval(0.033f);
+                        renderer->getTerrainManager()->setLoadRadius(5);
+                        renderer->getTerrainManager()->setUnloadRadius(8);
+                        renderer->getTerrainManager()->setTaxiStreamingMode(false);
+                    }
+                });
+                break;
+            }
+
             inGameStep = "gameHandler update";
             updateCheckpoint = "in_game: gameHandler update";
             runInGameStage("gameHandler->update", [&] {
@@ -2154,6 +2204,10 @@ void Application::render() {
         renderer->renderHUD();
     }
 
+    if (replay_) {
+        replay_->renderOverlay();
+    }
+
     // Render UI on top (ends ImGui frame with ImGui::Render())
     if (uiManager) {
         uiManager->render(state, authHandler.get(), gameHandler.get());
@@ -2208,6 +2262,59 @@ void Application::setupUICallbacks() {
     transportCallbacks_ = std::make_unique<TransportCallbackHandler>(
         *entitySpawner_, *renderer, *gameHandler, worldLoader_.get());
     transportCallbacks_->setupCallbacks();
+}
+
+bool Application::startReplayMode() {
+    if (!worldLoader_ || !gameHandler || !entitySpawner_ || !renderer) {
+        LOG_ERROR("Replay mode cannot start before world systems are initialized");
+        return false;
+    }
+
+    replay_ = std::make_unique<GodviewReplay>();
+    std::string error;
+    if (!replay_->load(options_.replayPath, error)) {
+        LOG_ERROR("Failed to load replay: ", error);
+        replay_.reset();
+        return false;
+    }
+
+    const auto* firstPlayer = replay_->firstPlayer();
+    if (!firstPlayer) {
+        LOG_ERROR("Replay contains no player positions");
+        replay_.reset();
+        return false;
+    }
+
+    worldLoader_->cancelWorldPreload();
+    const auto& firstSnapshot = replay_->firstSnapshot();
+    LOG_INFO("Starting replay mode: map=", firstSnapshot.map,
+             " firstPlayer=", firstPlayer->name,
+             " pos=(", firstPlayer->x, ", ", firstPlayer->y, ", ", firstPlayer->z, ")");
+    worldLoader_->loadOnlineWorldTerrain(firstSnapshot.map, firstPlayer->x, firstPlayer->y, firstPlayer->z);
+
+    if (auto* cc = renderer->getCameraController()) {
+        glm::vec3 observer(firstPlayer->x, firstPlayer->y - 35.0f, firstPlayer->z + 30.0f);
+        cc->setFollowTarget(nullptr);
+        cc->setOnlineMode(false);
+        cc->setUseWoWSpeed(false);
+        cc->setMovementSpeed(80.0f);
+        cc->setMovementCallback(nullptr);
+        cc->setStandUpCallback(nullptr);
+        cc->setSitDownCallback(nullptr);
+        cc->setAutoFollowCancelCallback(nullptr);
+        cc->setDefaultSpawn(observer, 90.0f, -35.0f);
+        cc->reset();
+    }
+
+    gameHandler->setPlayerGuid(0);
+    gameHandler->enterOfflineReplayWorld();
+
+    replay_->start();
+    replay_->update(0.0f, *gameHandler, *entitySpawner_, *renderer);
+    entitySpawner_->update();
+    replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
+    LOG_INFO("Replay mode ready");
+    return true;
 }
 
 void Application::spawnPlayerCharacter() {

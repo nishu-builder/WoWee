@@ -181,6 +181,12 @@ public:
      * Get current connection state
      */
     WorldState getState() const { return state; }
+    bool isOfflineReplayWorld() const { return offlineReplayWorld_; }
+
+    /**
+     * Enter an in-world state without a socket for offline replay rendering.
+     */
+    void enterOfflineReplayWorld();
 
     /**
      * Request character list from server
@@ -2723,6 +2729,7 @@ private:
 
     // State
     WorldState state = WorldState::DISCONNECTED;
+    bool offlineReplayWorld_ = false;
 
     // Authentication data
     std::vector<uint8_t> sessionKey;    // 40-byte session key from auth server

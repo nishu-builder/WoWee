@@ -4,7 +4,10 @@
 #include <csignal>
 #include <cstdlib>
 #include <cctype>
+#include <filesystem>
+#include <iostream>
 #include <string>
+#include <utility>
 #include <SDL2/SDL.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -81,7 +84,40 @@ static wowee::core::LogLevel readLogLevelFromEnv() {
     return wowee::core::LogLevel::WARNING;
 }
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
+static void printUsage(const char* exe) {
+    std::cout << "Usage: " << exe << " [--replay <godview.jsonl>]\n";
+}
+
+static bool parseOptions(int argc, char* argv[], wowee::core::ApplicationOptions& options) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--help" || arg == "-h") {
+            printUsage(argv[0] ? argv[0] : "wowee");
+            std::exit(0);
+        }
+        if (arg == "--replay") {
+            if (i + 1 >= argc) {
+                std::cerr << "--replay requires a JSONL file path\n";
+                return false;
+            }
+            std::filesystem::path replayPath(argv[++i]);
+            options.replayPath = std::filesystem::absolute(replayPath).string();
+            continue;
+        }
+
+        std::cerr << "Unknown argument: " << arg << "\n";
+        printUsage(argv[0] ? argv[0] : "wowee");
+        return false;
+    }
+    return true;
+}
+
+int main(int argc, char* argv[]) {
+    wowee::core::ApplicationOptions options;
+    if (!parseOptions(argc, argv, options)) {
+        return 1;
+    }
+
 #ifdef __linux__
     g_emergencyDisplay = XOpenDisplay(nullptr);
     // Use sigaction for SIGSEGV/SIGABRT/SIGFPE to get si_addr (faulting address)
@@ -126,7 +162,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         LOG_INFO("=== Wowee Native Client ===");
         LOG_INFO("Starting application...");
 
-        wowee::core::Application app;
+        wowee::core::Application app(std::move(options));
 
         if (!app.initialize()) {
             LOG_FATAL("Failed to initialize application");
