@@ -1007,38 +1007,51 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         ImVec2 screenPos;
         if (!projectToScreen(renderPos, screenPos)) continue;
+        const float anchorSx = screenPos.x;
+        const float anchorSy = screenPos.y;
         float sx = screenPos.x;
         float sy = screenPos.y;
-        if (offlineReplay && isReplayTargeted && !isPlayer) {
-            auto sourceIt = replayTargetSourceGuids.find(guid);
-            auto sourceEntity = (sourceIt != replayTargetSourceGuids.end())
-                ? gameHandler.getEntityManager().getEntity(sourceIt->second)
-                : nullptr;
-            if (sourceEntity && sourceEntity->isUnit()) {
-                auto* sourceUnit = static_cast<game::Unit*>(sourceEntity.get());
-                glm::vec3 sourceRenderPos;
-                if (!core::Application::getInstance().getRenderPositionForGuid(sourceIt->second, sourceRenderPos)) {
-                    sourceRenderPos = core::coords::canonicalToRender(
-                        glm::vec3(sourceUnit->getX(), sourceUnit->getY(), sourceUnit->getZ()));
-                }
-                sourceRenderPos.z += 2.3f;
 
-                ImVec2 sourceScreen;
-                if (projectToScreen(sourceRenderPos, sourceScreen)) {
-                    float dx = sx - sourceScreen.x;
-                    float dy = sy - sourceScreen.y;
-                    float len = std::sqrt(dx * dx + dy * dy);
-                    const float minSeparation = 74.0f * settingsPanel_.nameplateScale_;
-                    if (len < minSeparation) {
-                        if (len < 1.0f) {
-                            dx = 0.65f;
-                            dy = 0.76f;
-                            len = 1.0f;
-                        }
-                        float push = minSeparation - len;
-                        sx += (dx / len) * push;
-                        sy += (dy / len) * push;
-                    }
+        if (offlineReplay) {
+            auto separateFromReplayPeer = [&](uint64_t peerGuid) {
+                auto peerEntity = gameHandler.getEntityManager().getEntity(peerGuid);
+                if (!peerEntity || !peerEntity->isUnit()) return;
+
+                auto* peerUnit = static_cast<game::Unit*>(peerEntity.get());
+                glm::vec3 peerRenderPos;
+                if (!core::Application::getInstance().getRenderPositionForGuid(peerGuid, peerRenderPos)) {
+                    peerRenderPos = core::coords::canonicalToRender(
+                        glm::vec3(peerUnit->getX(), peerUnit->getY(), peerUnit->getZ()));
+                }
+                peerRenderPos.z += 2.3f;
+
+                ImVec2 peerScreen;
+                if (!projectToScreen(peerRenderPos, peerScreen)) return;
+
+                float dx = sx - peerScreen.x;
+                float dy = sy - peerScreen.y;
+                float len = std::sqrt(dx * dx + dy * dy);
+                const float minSeparation = 118.0f * settingsPanel_.nameplateScale_;
+                if (len >= minSeparation) return;
+
+                if (len < 1.0f) {
+                    const bool currentSortsFirst = guid < peerGuid;
+                    dx = currentSortsFirst ? -0.65f : 0.65f;
+                    dy = currentSortsFirst ? -0.76f : 0.76f;
+                    len = 1.0f;
+                }
+
+                const float push = (minSeparation - len) * 0.5f;
+                sx += (dx / len) * push;
+                sy += (dy / len) * push;
+            };
+
+            if (hasRecordedTarget) {
+                separateFromReplayPeer(unitTargetGuid);
+            } else if (isReplayTargeted && !isPlayer) {
+                auto sourceIt = replayTargetSourceGuids.find(guid);
+                if (sourceIt != replayTargetSourceGuids.end()) {
+                    separateFromReplayPeer(sourceIt->second);
                 }
             }
             const float screenPad = 12.0f;
@@ -1148,7 +1161,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ImVec2 targetScreen;
             if (projectToScreen(targetRenderPos, targetScreen)) {
                 const float scale = settingsPanel_.nameplateScale_;
-                ImVec2 lineStart(sx, sy + barH * 0.5f);
+                ImVec2 lineStart(anchorSx, anchorSy + barH * 0.5f);
                 float dx = targetScreen.x - lineStart.x;
                 float dy = targetScreen.y - lineStart.y;
                 float len = std::sqrt(dx * dx + dy * dy);
