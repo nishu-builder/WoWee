@@ -62,6 +62,15 @@ bool hasDisplayEquipment(const EntitySpawner::HumanoidDisplayAppearance& appeara
                        [](uint32_t displayId) { return displayId != 0; });
 }
 
+bool shouldRenderPlayerAsDisplayModel(uint32_t displayId,
+                                      uint32_t nativeDisplayId,
+                                      const std::optional<EntitySpawner::HumanoidDisplayAppearance>& appearance) {
+    if (displayId == 0) return false;
+    if (nativeDisplayId != 0 && displayId == nativeDisplayId) return false;
+    if (!appearance) return true;
+    return !isPlayableRace(appearance->raceId);
+}
+
 void buildDisplayEquipmentArrays(const EntitySpawner::HumanoidDisplayAppearance& appearance,
                                  std::array<uint32_t, 19>& displayInfoIds,
                                  std::array<uint8_t, 19>& inventoryTypes) {
@@ -196,6 +205,8 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     lastMoving_.clear();
     lastCreatureMoving_.clear();
     lastPlayerEquipmentHash_.clear();
+    displayOverridePlayerGuids_.clear();
+    displayOverridePlayerDisplayIds_.clear();
 
     if (!recording_.load(path, error)) {
         return false;
@@ -243,6 +254,8 @@ void GodviewReplay::start() {
     lastMoving_.clear();
     lastCreatureMoving_.clear();
     lastPlayerEquipmentHash_.clear();
+    displayOverridePlayerGuids_.clear();
+    displayOverridePlayerDisplayIds_.clear();
 }
 
 void GodviewReplay::setCurrentMs(double value) {
@@ -445,6 +458,9 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         entity->setRecordedCombat(player.combat);
         const uint32_t playerDisplayId = player.displayId != 0 ? player.displayId : player.nativeDisplayId;
         const auto displayAppearance = entitySpawner.getHumanoidDisplayAppearance(playerDisplayId);
+        const bool useDisplayModel = shouldRenderPlayerAsDisplayModel(playerDisplayId,
+                                                                      player.nativeDisplayId,
+                                                                      displayAppearance);
         entity->setDisplayId(playerDisplayId);
         entity->setMountDisplayId(player.mountDisplayId);
         entity->setPosition(canonical.x, canonical.y, canonical.z, canonicalYaw);
@@ -461,6 +477,44 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_MAXHEALTH, std::max<uint32_t>(1, player.maxHp));
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_LEVEL, player.level);
         setTargetFields(*entity, player.targetGuid);
+
+        if (useDisplayModel) {
+            if (entitySpawner.isPlayerSpawned(player.guid)) {
+                entitySpawner.despawnPlayer(player.guid);
+            }
+            bool needsDisplayRespawn = false;
+            auto displayIt = displayOverridePlayerDisplayIds_.find(player.guid);
+            if (displayIt != displayOverridePlayerDisplayIds_.end() && displayIt->second != playerDisplayId) {
+                entitySpawner.despawnCreature(player.guid);
+                lastMoving_.erase(player.guid);
+                needsDisplayRespawn = true;
+            }
+            displayOverridePlayerDisplayIds_[player.guid] = playerDisplayId;
+
+            auto insertResult = displayOverridePlayerGuids_.insert(player.guid);
+            if (insertResult.second) {
+                LOG_INFO("Replay player display override: ", player.name,
+                         " displayId=", playerDisplayId,
+                         " guid=", player.rawGuid.empty() ? std::to_string(player.guid) : player.rawGuid);
+            }
+            if (needsDisplayRespawn ||
+                (!entitySpawner.isCreatureSpawned(player.guid) && !entitySpawner.isCreaturePending(player.guid))) {
+                entitySpawner.queueCreatureSpawn(player.guid,
+                                                 playerDisplayId,
+                                                 canonical.x,
+                                                 canonical.y,
+                                                 canonical.z,
+                                                 canonicalYaw);
+            }
+            lastPlayerEquipmentHash_.erase(player.guid);
+            continue;
+        }
+
+        if (displayOverridePlayerGuids_.erase(player.guid) > 0) {
+            entitySpawner.despawnCreature(player.guid);
+            displayOverridePlayerDisplayIds_.erase(player.guid);
+            lastMoving_.erase(player.guid);
+        }
 
         if (!entitySpawner.isPlayerSpawned(player.guid) && !entitySpawner.isPlayerPending(player.guid)) {
             uint8_t spawnRace = player.race;
@@ -578,6 +632,10 @@ void GodviewReplay::despawnMissingPlayers(game::GameHandler& gameHandler,
 
     for (uint64_t guid : toDespawn) {
         entitySpawner.despawnPlayer(guid);
+        if (displayOverridePlayerGuids_.erase(guid) > 0) {
+            entitySpawner.despawnCreature(guid);
+            displayOverridePlayerDisplayIds_.erase(guid);
+        }
         gameHandler.getEntityManager().removeEntity(guid);
         lastMoving_.erase(guid);
         lastPlayerEquipmentHash_.erase(guid);
@@ -627,6 +685,9 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
     for (const auto& sampled : players) {
         const Player& player = sampled.player;
         uint32_t instanceId = entitySpawner.getPlayerInstanceId(player.guid);
+        if (instanceId == 0 && displayOverridePlayerGuids_.count(player.guid) > 0) {
+            instanceId = entitySpawner.getCreatureInstanceId(player.guid);
+        }
         if (instanceId == 0) continue;
 
         glm::vec3 canonical = coords::serverToCanonical(glm::vec3(player.x, player.y, player.z));

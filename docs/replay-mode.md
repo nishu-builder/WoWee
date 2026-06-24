@@ -183,9 +183,13 @@ Replay mode now uses Coworld v2 identity fields when available:
   and weapon compositor.
 - Uses equipment display IDs from the resolved player display row as a fallback
   only when the recording has no explicit equipment array.
-- Sets player display and mount display fields for UI/state fidelity. Full
-  transformation or mounted rendering still needs a dedicated display-ID override
-  path in the player renderer.
+- Uses non-humanoid player `display_id` / `native_display_id` values as a
+  replay-only display-model override, so shapeshifts and transformations can
+  render as their recorded server model while keeping player labels and target
+  state. Humanoid display IDs still feed race, gender, skin, hair, and equipment
+  appearance.
+- Sets player mount display fields for UI/state fidelity. Full rider-on-mount
+  composition still needs a dedicated mount attachment path.
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
