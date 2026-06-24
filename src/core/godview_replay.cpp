@@ -22,15 +22,85 @@ namespace core {
 
 namespace {
 
+uint32_t makeAppearanceBytes(uint8_t skin, uint8_t face, uint8_t hair, uint8_t hairColor) {
+    return static_cast<uint32_t>(skin) |
+           (static_cast<uint32_t>(face) << 8) |
+           (static_cast<uint32_t>(hair) << 16) |
+           (static_cast<uint32_t>(hairColor) << 24);
+}
+
 uint32_t makeAppearanceBytes(uint64_t guid) {
     uint8_t skin = static_cast<uint8_t>((guid >> 0) & 0x03);
     uint8_t face = static_cast<uint8_t>((guid >> 8) & 0x03);
     uint8_t hair = static_cast<uint8_t>((guid >> 16) & 0x05);
     uint8_t hairColor = static_cast<uint8_t>((guid >> 24) & 0x04);
-    return static_cast<uint32_t>(skin) |
-           (static_cast<uint32_t>(face) << 8) |
-           (static_cast<uint32_t>(hair) << 16) |
-           (static_cast<uint32_t>(hairColor) << 24);
+    return makeAppearanceBytes(skin, face, hair, hairColor);
+}
+
+bool isPlayableRace(uint8_t raceId) {
+    switch (static_cast<game::Race>(raceId)) {
+        case game::Race::HUMAN:
+        case game::Race::ORC:
+        case game::Race::DWARF:
+        case game::Race::NIGHT_ELF:
+        case game::Race::UNDEAD:
+        case game::Race::TAUREN:
+        case game::Race::GNOME:
+        case game::Race::TROLL:
+        case game::Race::BLOOD_ELF:
+        case game::Race::DRAENEI:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool hasDisplayEquipment(const EntitySpawner::HumanoidDisplayAppearance& appearance) {
+    return std::any_of(appearance.equipmentDisplayIds.begin(),
+                       appearance.equipmentDisplayIds.end(),
+                       [](uint32_t displayId) { return displayId != 0; });
+}
+
+void buildDisplayEquipmentArrays(const EntitySpawner::HumanoidDisplayAppearance& appearance,
+                                 std::array<uint32_t, 19>& displayInfoIds,
+                                 std::array<uint8_t, 19>& inventoryTypes) {
+    displayInfoIds.fill(0);
+    inventoryTypes.fill(0);
+
+    static constexpr std::array<uint8_t, 11> kPlayerSlots = {
+        0,  // helm
+        2,  // shoulder
+        3,  // shirt
+        4,  // chest
+        5,  // belt
+        6,  // legs
+        7,  // feet
+        8,  // wrist
+        9,  // hands
+        18, // tabard
+        14  // cape
+    };
+    static constexpr std::array<uint8_t, 11> kInventoryTypes = {
+        1,  // head
+        3,  // shoulder
+        4,  // body
+        5,  // chest
+        6,  // waist
+        7,  // legs
+        8,  // feet
+        9,  // wrists
+        10, // hands
+        19, // tabard
+        16  // cloak
+    };
+
+    for (size_t i = 0; i < appearance.equipmentDisplayIds.size(); i++) {
+        uint32_t displayId = appearance.equipmentDisplayIds[i];
+        if (displayId == 0) continue;
+        uint8_t slot = kPlayerSlots[i];
+        displayInfoIds[slot] = displayId;
+        inventoryTypes[slot] = kInventoryTypes[i];
+    }
 }
 
 void setFieldIfValid(game::Entity& entity, game::UF field, uint32_t value) {
@@ -64,6 +134,17 @@ size_t equipmentHash(const GodviewRecording::Player& player) {
         mix(equipment.subclass);
     }
 
+    return hash;
+}
+
+size_t displayEquipmentHash(const EntitySpawner::HumanoidDisplayAppearance& appearance) {
+    size_t hash = 1099511628211ull;
+    for (size_t i = 0; i < appearance.equipmentDisplayIds.size(); i++) {
+        hash ^= static_cast<size_t>(i);
+        hash *= 1099511628211ull;
+        hash ^= static_cast<size_t>(appearance.equipmentDisplayIds[i]);
+        hash *= 1099511628211ull;
+    }
     return hash;
 }
 
@@ -172,6 +253,7 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         entity->setHealth(player.hp);
         entity->setMaxHealth(std::max<uint32_t>(1, player.maxHp));
         const uint32_t playerDisplayId = player.displayId != 0 ? player.displayId : player.nativeDisplayId;
+        const auto displayAppearance = entitySpawner.getHumanoidDisplayAppearance(playerDisplayId);
         entity->setDisplayId(playerDisplayId);
         entity->setMountDisplayId(player.mountDisplayId);
         entity->setPosition(canonical.x, canonical.y, canonical.z, canonicalYaw);
@@ -190,24 +272,51 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         setTargetFields(*entity, player.targetGuid);
 
         if (!entitySpawner.isPlayerSpawned(player.guid) && !entitySpawner.isPlayerPending(player.guid)) {
+            uint8_t spawnRace = player.race;
+            uint8_t spawnGender = player.gender;
+            uint32_t appearanceBytes = makeAppearanceBytes(player.guid);
+            uint8_t facialFeatures = static_cast<uint8_t>((player.guid >> 32) & 0x03);
+
+            if (displayAppearance) {
+                if (isPlayableRace(displayAppearance->raceId)) {
+                    spawnRace = displayAppearance->raceId;
+                }
+                if (displayAppearance->sexId <= 1) {
+                    spawnGender = displayAppearance->sexId;
+                }
+                appearanceBytes = makeAppearanceBytes(displayAppearance->skinId,
+                                                      displayAppearance->faceId,
+                                                      displayAppearance->hairStyleId,
+                                                      displayAppearance->hairColorId);
+                facialFeatures = displayAppearance->facialHairId;
+            }
+
             entitySpawner.queuePlayerSpawn(player.guid,
-                                           player.race,
-                                           player.gender,
-                                           makeAppearanceBytes(player.guid),
-                                           static_cast<uint8_t>((player.guid >> 32) & 0x03),
+                                           spawnRace,
+                                           spawnGender,
+                                           appearanceBytes,
+                                           facialFeatures,
                                            canonical.x,
                                            canonical.y,
                                            canonical.z,
                                            canonicalYaw);
         }
 
-        size_t currentEquipmentHash = equipmentHash(player);
+        const bool useDisplayEquipment = player.equipment.empty() &&
+            displayAppearance && hasDisplayEquipment(*displayAppearance);
+        size_t currentEquipmentHash = useDisplayEquipment
+            ? displayEquipmentHash(*displayAppearance)
+            : equipmentHash(player);
         auto equipmentIt = lastPlayerEquipmentHash_.find(player.guid);
-        if ((!player.equipment.empty() || equipmentIt != lastPlayerEquipmentHash_.end()) &&
+        if ((!player.equipment.empty() || useDisplayEquipment || equipmentIt != lastPlayerEquipmentHash_.end()) &&
             (equipmentIt == lastPlayerEquipmentHash_.end() || equipmentIt->second != currentEquipmentHash)) {
             std::array<uint32_t, 19> displayInfoIds{};
             std::array<uint8_t, 19> inventoryTypes{};
-            buildEquipmentArrays(player, displayInfoIds, inventoryTypes);
+            if (useDisplayEquipment) {
+                buildDisplayEquipmentArrays(*displayAppearance, displayInfoIds, inventoryTypes);
+            } else {
+                buildEquipmentArrays(player, displayInfoIds, inventoryTypes);
+            }
             entitySpawner.queuePlayerEquipment(player.guid, displayInfoIds, inventoryTypes);
             lastPlayerEquipmentHash_[player.guid] = currentEquipmentHash;
         }

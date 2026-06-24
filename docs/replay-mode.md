@@ -167,10 +167,16 @@ Replay mode now uses Coworld v2 identity fields when available:
 
 - Uses race plus `gender` to choose a player model, defaulting to male for v1
   recordings when `gender` is absent.
-- Generates stable placeholder face/hair appearance bytes from GUID until the
-  recorder emits exact character customization fields.
+- Resolves `display_id` / `native_display_id` through WoWee's
+  `CreatureDisplayInfo` and `CreatureDisplayInfoExtra` lookups when available,
+  using the server display row for player race, gender, skin, face, hair, and
+  facial hair at spawn time.
+- Falls back to stable placeholder face/hair appearance bytes from GUID for v1
+  recordings or display IDs not present in the local DBCs.
 - Applies recorded player equipment display IDs through WoWee's existing armor
   and weapon compositor.
+- Uses equipment display IDs from the resolved player display row as a fallback
+  only when the recording has no explicit equipment array.
 - Sets player display and mount display fields for UI/state fidelity. Full
   transformation or mounted rendering still needs a dedicated display-ID override
   path in the player renderer.

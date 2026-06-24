@@ -98,8 +98,20 @@ public:
     bool getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) const;
 
     // Display data lookups
+    struct HumanoidDisplayAppearance {
+        uint8_t raceId = 0;
+        uint8_t sexId = 0;
+        uint8_t skinId = 0;
+        uint8_t faceId = 0;
+        uint8_t hairStyleId = 0;
+        uint8_t hairColorId = 0;
+        uint8_t facialHairId = 0;
+        std::array<uint32_t, 11> equipmentDisplayIds{};
+    };
+
     bool areCreatureLookupsBuilt() const { return creatureLookupsBuilt_; }
     bool areGameObjectLookupsBuilt() const { return gameObjectLookupsBuilt_; }
+    std::optional<HumanoidDisplayAppearance> getHumanoidDisplayAppearance(uint32_t displayId) const;
     std::string getModelPathForDisplayId(uint32_t displayId) const;
     std::string getGameObjectModelPathForDisplayId(uint32_t displayId) const;
     audio::VoiceType detectVoiceTypeFromDisplayId(uint32_t displayId) const;

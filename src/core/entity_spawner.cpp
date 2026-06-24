@@ -648,6 +648,37 @@ void EntitySpawner::buildCreatureDisplayLookups() {
     creatureLookupsBuilt_ = true;
 }
 
+std::optional<EntitySpawner::HumanoidDisplayAppearance>
+EntitySpawner::getHumanoidDisplayAppearance(uint32_t displayId) const {
+    if (displayId == 0) {
+        return std::nullopt;
+    }
+
+    auto itDisplay = displayDataMap_.find(displayId);
+    if (itDisplay == displayDataMap_.end() || itDisplay->second.extraDisplayId == 0) {
+        return std::nullopt;
+    }
+
+    auto itExtra = humanoidExtraMap_.find(itDisplay->second.extraDisplayId);
+    if (itExtra == humanoidExtraMap_.end()) {
+        return std::nullopt;
+    }
+
+    const HumanoidDisplayExtra& extra = itExtra->second;
+    HumanoidDisplayAppearance appearance;
+    appearance.raceId = extra.raceId;
+    appearance.sexId = extra.sexId;
+    appearance.skinId = extra.skinId;
+    appearance.faceId = extra.faceId;
+    appearance.hairStyleId = extra.hairStyleId;
+    appearance.hairColorId = extra.hairColorId;
+    appearance.facialHairId = extra.facialHairId;
+    for (size_t i = 0; i < appearance.equipmentDisplayIds.size(); i++) {
+        appearance.equipmentDisplayIds[i] = extra.equipDisplayId[i];
+    }
+    return appearance;
+}
+
 std::string EntitySpawner::getModelPathForDisplayId(uint32_t displayId) const {
     // WotLK 3.3.5a CreatureDisplayInfo tops out around ~32000; values far
     // beyond that are corrupted update-field data or packet parse errors.
