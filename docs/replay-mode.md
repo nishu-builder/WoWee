@@ -193,6 +193,8 @@ Replay mode now uses Coworld v2 identity fields when available:
   the recording says the unit is in combat.
 - Marks replay nameplates with an orange border and a compact `target: Name`
   sublabel when the recording contains a current target GUID.
+- Draws a thin replay-only target tether between visible target-bearing units and
+  their current target so god-view captures show engagement relationships at a glance.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
 - Uses run animation while interpolated movement is nonzero, unarmed-ready while

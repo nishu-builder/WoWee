@@ -904,6 +904,19 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const uint64_t  playerGuid = gameHandler.getPlayerGuid();
     const uint64_t  targetGuid = gameHandler.getTargetGuid();
     const bool offlineReplay = gameHandler.isOfflineReplayWorld();
+    auto projectToScreen = [&](const glm::vec3& point, ImVec2& out) {
+        glm::vec4 clipPos = viewProj * glm::vec4(point, 1.0f);
+        if (clipPos.w <= 0.01f) return false;
+
+        glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
+        if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f) return false;
+
+        // The camera bakes the Vulkan Y-flip into the projection matrix, so
+        // NDC y = -1 is the top of the screen and y = 1 is the bottom.
+        out.x = (ndc.x * 0.5f + 0.5f) * screenW;
+        out.y = (ndc.y * 0.5f + 0.5f) * screenH;
+        return true;
+    };
 
     // Build set of creature entries that are kill objectives in active (incomplete) quests.
     std::unordered_set<uint32_t> questKillEntries;
@@ -941,6 +954,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isCorpse = (unit->getHealth() == 0);
         const uint64_t unitTargetGuid = getUnitTargetGuid(*entityPtr);
         const bool hasRecordedTarget = offlineReplay && unitTargetGuid != 0;
+        auto recordedTargetEntity = hasRecordedTarget
+            ? gameHandler.getEntityManager().getEntity(unitTargetGuid)
+            : nullptr;
         const bool recordedCombat = offlineReplay && unit->isRecordedCombat() && !isCorpse;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
@@ -974,19 +990,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                                        : ((isTarget || isPlayer) ? 40.0f : 20.0f);
         if (distSq > cullDist * cullDist) continue;
 
-        // Project to clip space
-        glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
-        if (clipPos.w <= 0.01f) continue;  // Behind camera
-
-        glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
-        if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f) continue;
-
-        // NDC → screen pixels.
-        // The camera bakes the Vulkan Y-flip into the projection matrix, so
-        // NDC y = -1 is the top of the screen and y = 1 is the bottom.
-        // Map directly: sy = (ndc.y + 1) / 2 * screenH  (no extra inversion).
-        float sx = (ndc.x * 0.5f + 0.5f) * screenW;
-        float sy = (ndc.y * 0.5f + 0.5f) * screenH;
+        ImVec2 screenPos;
+        if (!projectToScreen(renderPos, screenPos)) continue;
+        float sx = screenPos.x;
+        float sy = screenPos.y;
 
         // Fade out in the last 5 units of cull range
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
@@ -1074,6 +1081,26 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             drawList->AddRectFilled(ImVec2(barX,                 sy), ImVec2(barX + barW * healthPct,   sy + barH), barColor,   2.0f);
         }
         drawList->AddRect       (ImVec2(barX - 1.0f, sy - 1.0f), ImVec2(barX + barW + 1.0f, sy + barH + 1.0f), borderColor, 2.0f);
+
+        if (hasRecordedTarget && recordedTargetEntity && recordedTargetEntity->isUnit()) {
+            auto* targetUnit = static_cast<game::Unit*>(recordedTargetEntity.get());
+            glm::vec3 targetRenderPos;
+            if (!core::Application::getInstance().getRenderPositionForGuid(unitTargetGuid, targetRenderPos)) {
+                targetRenderPos = core::coords::canonicalToRender(
+                    glm::vec3(targetUnit->getX(), targetUnit->getY(), targetUnit->getZ()));
+            }
+            targetRenderPos.z += 1.2f;
+
+            ImVec2 targetScreen;
+            if (projectToScreen(targetRenderPos, targetScreen)) {
+                ImU32 lineColor = recordedCombat
+                    ? IM_COL32(255, 95, 60, A(180))
+                    : IM_COL32(255, 150, 50, A(130));
+                ImVec2 lineStart(sx, sy + barH * 0.5f);
+                drawList->AddLine(lineStart, targetScreen, lineColor, 1.5f * settingsPanel_.nameplateScale_);
+                drawList->AddCircleFilled(targetScreen, 2.5f * settingsPanel_.nameplateScale_, lineColor);
+            }
+        }
 
         // Elite/Boss/Rare decoration: extra outer border with rank-specific color
         if (creatureRank == 1 || creatureRank == 2) {
@@ -1346,8 +1373,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             subLabel += "combat";
         }
         if (hasRecordedTarget) {
-            auto targetEntity = gameHandler.getEntityManager().getEntity(unitTargetGuid);
-            std::string targetName = targetEntity ? getEntityName(targetEntity) : "target";
+            std::string targetName = recordedTargetEntity ? getEntityName(recordedTargetEntity) : "target";
             if (targetName.empty() || targetName == "Unknown") {
                 targetName = "target";
             }
