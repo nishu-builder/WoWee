@@ -23,7 +23,7 @@ layout(set = 2, binding = 0) readonly buffer BoneSSBO {
 
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec4 aBoneWeights;
-layout(location = 2) in ivec4 aBoneIndices;
+layout(location = 2) in uvec4 aBoneIndices;
 layout(location = 3) in vec3 aNormal;
 layout(location = 4) in vec2 aTexCoord;
 layout(location = 5) in vec4 aTangent;
@@ -34,11 +34,20 @@ layout(location = 2) out vec2 TexCoord;
 layout(location = 3) out vec3 Tangent;
 layout(location = 4) out vec3 Bitangent;
 
+mat4 skinMatrix(uvec4 boneIndices, vec4 boneWeights) {
+    float weightSum = boneWeights.x + boneWeights.y + boneWeights.z + boneWeights.w;
+    if (weightSum <= 0.0001) {
+        return mat4(1.0);
+    }
+
+    return bones[boneIndices.x] * boneWeights.x
+         + bones[boneIndices.y] * boneWeights.y
+         + bones[boneIndices.z] * boneWeights.z
+         + bones[boneIndices.w] * boneWeights.w;
+}
+
 void main() {
-    mat4 skinMat = bones[aBoneIndices.x] * aBoneWeights.x
-                 + bones[aBoneIndices.y] * aBoneWeights.y
-                 + bones[aBoneIndices.z] * aBoneWeights.z
-                 + bones[aBoneIndices.w] * aBoneWeights.w;
+    mat4 skinMat = skinMatrix(aBoneIndices, aBoneWeights);
 
     vec4 skinnedPos = skinMat * vec4(aPos, 1.0);
     vec3 skinnedNorm = mat3(skinMat) * aNormal;

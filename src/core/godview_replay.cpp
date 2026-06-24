@@ -24,7 +24,10 @@ namespace core {
 namespace {
 
 constexpr uint64_t kReplayMountGuidStart = 0xF000000000000000ull;
-constexpr float kReplayMountRiderZOffset = 1.35f;
+constexpr float kReplayMountFallbackRiderZOffset = 1.35f;
+constexpr float kReplayMountSeatHeightFraction = 0.58f;
+constexpr float kReplayMountSeatMinZOffset = 0.8f;
+constexpr float kReplayMountSeatMaxZOffset = 3.25f;
 
 uint32_t makeAppearanceBytes(uint8_t skin, uint8_t face, uint8_t hair, uint8_t hairColor) {
     return static_cast<uint32_t>(skin) |
@@ -90,6 +93,33 @@ uint32_t replayPlayerAnimation(const GodviewRecording::Player& player,
         anim = moving ? rendering::anim::RUN : rendering::anim::STAND;
     }
     return anim;
+}
+
+float replayMountRiderZOffset(rendering::CharacterRenderer& characterRenderer,
+                              uint32_t mountInstanceId) {
+    glm::vec3 mountPosition{};
+    glm::vec3 boundsCenter{};
+    float boundsRadius = 0.0f;
+    float footZ = 0.0f;
+    if (!characterRenderer.getInstancePosition(mountInstanceId, mountPosition) ||
+        !characterRenderer.getInstanceBounds(mountInstanceId, boundsCenter, boundsRadius) ||
+        !characterRenderer.getInstanceFootZ(mountInstanceId, footZ)) {
+        return kReplayMountFallbackRiderZOffset;
+    }
+
+    (void)boundsRadius;
+    const float mountHeight = std::max(0.0f, (boundsCenter.z - footZ) * 2.0f);
+    if (mountHeight <= 0.25f) {
+        return kReplayMountFallbackRiderZOffset;
+    }
+
+    const float seatZ = footZ + mountHeight * kReplayMountSeatHeightFraction;
+    const float offset = seatZ - mountPosition.z;
+    if (!std::isfinite(offset)) {
+        return kReplayMountFallbackRiderZOffset;
+    }
+
+    return std::clamp(offset, kReplayMountSeatMinZOffset, kReplayMountSeatMaxZOffset);
 }
 
 void buildDisplayEquipmentArrays(const EntitySpawner::HumanoidDisplayAppearance& appearance,
@@ -793,10 +823,25 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
 
         glm::vec3 canonical = coords::serverToCanonical(glm::vec3(player.x, player.y, player.z));
         glm::vec3 renderPos = coords::canonicalToRender(canonical);
-        if (mounted) {
-            renderPos.z += kReplayMountRiderZOffset;
-        }
         float renderYaw = coords::serverToCanonicalYaw(player.orientation) + glm::radians(90.0f);
+
+        uint32_t mountInstanceId = 0;
+        auto mountGuidIt = replayMountGuids_.find(player.guid);
+        if (player.mountDisplayId != 0 && mountGuidIt != replayMountGuids_.end()) {
+            mountInstanceId = entitySpawner.getCreatureInstanceId(mountGuidIt->second);
+            if (mountInstanceId != 0) {
+                glm::vec3 mountRenderPos = coords::canonicalToRender(canonical);
+                charRenderer->setInstancePosition(mountInstanceId, mountRenderPos);
+                charRenderer->setInstanceRotation(mountInstanceId, glm::vec3(0.0f, 0.0f, renderYaw));
+            }
+        }
+
+        if (mounted) {
+            renderPos.z += mountInstanceId != 0
+                ? replayMountRiderZOffset(*charRenderer, mountInstanceId)
+                : kReplayMountFallbackRiderZOffset;
+        }
+
         charRenderer->setInstancePosition(instanceId, renderPos);
         charRenderer->setInstanceRotation(instanceId, glm::vec3(0.0f, 0.0f, renderYaw));
 
@@ -812,25 +857,17 @@ void GodviewReplay::syncRender(game::GameHandler& gameHandler,
             lastPlayerMounted_[player.guid] = mounted;
         }
 
-        auto mountGuidIt = replayMountGuids_.find(player.guid);
-        if (player.mountDisplayId != 0 && mountGuidIt != replayMountGuids_.end()) {
-            uint32_t mountInstanceId = entitySpawner.getCreatureInstanceId(mountGuidIt->second);
-            if (mountInstanceId != 0) {
-                glm::vec3 mountRenderPos = coords::canonicalToRender(canonical);
-                charRenderer->setInstancePosition(mountInstanceId, mountRenderPos);
-                charRenderer->setInstanceRotation(mountInstanceId, glm::vec3(0.0f, 0.0f, renderYaw));
-
-                auto lastMountIt = lastMountMoving_.find(mountGuidIt->second);
-                bool mountStateChanged =
-                    lastMountIt == lastMountMoving_.end() || lastMountIt->second != moving;
-                if (mountStateChanged) {
-                    uint32_t mountAnim = moving ? rendering::anim::RUN : rendering::anim::STAND;
-                    if (!charRenderer->hasAnimation(mountInstanceId, mountAnim)) {
-                        mountAnim = rendering::anim::STAND;
-                    }
-                    charRenderer->playAnimation(mountInstanceId, mountAnim, true);
-                    lastMountMoving_[mountGuidIt->second] = moving;
+        if (mountInstanceId != 0 && mountGuidIt != replayMountGuids_.end()) {
+            auto lastMountIt = lastMountMoving_.find(mountGuidIt->second);
+            bool mountStateChanged =
+                lastMountIt == lastMountMoving_.end() || lastMountIt->second != moving;
+            if (mountStateChanged) {
+                uint32_t mountAnim = moving ? rendering::anim::RUN : rendering::anim::STAND;
+                if (!charRenderer->hasAnimation(mountInstanceId, mountAnim)) {
+                    mountAnim = rendering::anim::STAND;
                 }
+                charRenderer->playAnimation(mountInstanceId, mountAnim, true);
+                lastMountMoving_[mountGuidIt->second] = moving;
             }
         }
     }
