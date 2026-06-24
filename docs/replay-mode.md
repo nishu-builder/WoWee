@@ -210,7 +210,8 @@ Replay mode now uses Coworld v2 identity fields when available:
   `WOWEE_REPLAY_START_EVENT=1`, which is useful for automated screenshot smokes
   that should land on action without hardcoding a timestamp.
 - Can seek screenshot smokes to the first target-or-combat snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=1`, or the first combat snapshot with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=1`, the first target snapshot with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, or the first combat snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, when no explicit screenshot timestamp
   is set.
 - When the focused player has a recorded target that is also present in the
@@ -261,20 +262,22 @@ frames to wait before capture when no timestamp is supplied; it defaults to
 `120`.
 
 Set `WOWEE_REPLAY_SCREENSHOT_EVENT=1` to seek the replay to the first
-target-or-combat snapshot before scheduling a screenshot, or set
-`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` to seek to the first actual combat
-snapshot. This is useful for recordings where the interesting action time changes
-between captures. An explicit `WOWEE_REPLAY_SCREENSHOT_MS` takes precedence when
-both are set.
+target-or-combat snapshot before scheduling a screenshot. Use
+`WOWEE_REPLAY_SCREENSHOT_EVENT=target` for the first target-bearing snapshot, or
+`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot.
+This is useful for recordings where the interesting action time changes between
+captures. An explicit `WOWEE_REPLAY_SCREENSHOT_MS` takes precedence when both are
+set.
 
 Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
 `WOWEE_REPLAY_CLEAN_CAPTURE=1` to hide the replay overlay plus minimap chrome for
 clean captures while keeping replay nameplates and target cues visible. The replay
 overlay can also be toggled interactively with `H`.
 
-Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `combat`, or a recorded player
-name/guid to start with the observer camera following that player. `event`
-selects a player involved in the current target-or-combat sample; `combat`
+Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, or a
+recorded player name/guid to start with the observer camera following that
+player. `event` selects a player involved in the current target-or-combat sample;
+`target` selects a player involved in the current target-bearing sample; `combat`
 selects a player involved in the current combat sample. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.

@@ -180,12 +180,12 @@ float lerpAngle(float a, float b, float t) {
 bool hasReplayEvent(const GodviewRecording::Snapshot& snapshot,
                     GodviewRecording::EventKind kind) {
     for (const auto& player : snapshot.players) {
-        if (player.combat) return true;
-        if (kind == GodviewRecording::EventKind::TargetOrCombat && player.targetGuid) return true;
+        if (kind != GodviewRecording::EventKind::Target && player.combat) return true;
+        if (kind != GodviewRecording::EventKind::Combat && player.targetGuid) return true;
     }
     for (const auto& creature : snapshot.creatures) {
-        if (creature.combat) return true;
-        if (kind == GodviewRecording::EventKind::TargetOrCombat && creature.targetGuid) return true;
+        if (kind != GodviewRecording::EventKind::Target && creature.combat) return true;
+        if (kind != GodviewRecording::EventKind::Combat && creature.targetGuid) return true;
     }
     return false;
 }
