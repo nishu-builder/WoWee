@@ -109,6 +109,22 @@ int envIntValue(const char* key, int defaultValue) {
     return static_cast<int>(value);
 }
 
+std::optional<GodviewRecording::EventKind> replayEventKindFromEnv(const char* key) {
+    const char* raw = std::getenv(key);
+    if (!raw || !*raw) return std::nullopt;
+    if (raw[0] == '0' || raw[0] == 'f' || raw[0] == 'F' ||
+        raw[0] == 'n' || raw[0] == 'N') {
+        return std::nullopt;
+    }
+
+    std::string value(raw);
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (value == "combat") return GodviewRecording::EventKind::Combat;
+    return GodviewRecording::EventKind::TargetOrCombat;
+}
+
 float envFloatValue(const char* key, float defaultValue, float minValue, float maxValue) {
     const char* raw = std::getenv(key);
     if (!raw || !*raw) return defaultValue;
@@ -2490,13 +2506,28 @@ bool Application::startReplayMode() {
     gameHandler->setPlayerGuid(0);
     gameHandler->enterOfflineReplayWorld();
 
+    const char* replayScreenshotPathEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH");
+    const bool replayScreenshotRequested = replayScreenshotPathEnv && *replayScreenshotPathEnv;
+    const char* replayScreenshotMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS");
+    const bool replayScreenshotHasTargetMs = replayScreenshotMsEnv && *replayScreenshotMsEnv;
+    const auto replayScreenshotEventKind =
+        replayScreenshotRequested && !replayScreenshotHasTargetMs
+            ? replayEventKindFromEnv("WOWEE_REPLAY_SCREENSHOT_EVENT")
+            : std::nullopt;
+
     replay_->start();
     replayCameraFollowPosition_.reset();
     replayCameraFollowGuid_ = 0;
     replayCameraFollowTargetGuid_ = 0;
-    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false)) {
-        if (!replay_->seekTargetOrCombatEvent(1, true)) {
-            LOG_WARNING("Replay start event requested, but no target/combat snapshot was found");
+    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false) || replayScreenshotEventKind) {
+        const auto eventKind = replayScreenshotEventKind.value_or(
+            GodviewRecording::EventKind::TargetOrCombat);
+        if (!replay_->seekEvent(eventKind, 1, true)) {
+            if (eventKind == GodviewRecording::EventKind::Combat) {
+                LOG_WARNING("Replay combat event requested, but no combat snapshot was found");
+            } else {
+                LOG_WARNING("Replay target/combat event requested, but no target/combat snapshot was found");
+            }
         }
     }
     if (const char* focusPlayer = std::getenv("WOWEE_REPLAY_FOCUS_PLAYER")) {
@@ -2524,32 +2555,28 @@ bool Application::startReplayMode() {
     replayScreenshotTargetMs_ = -1.0;
     replayScreenshotFramesRemaining_ = -1;
     replayScreenshotExitAfterCapture_ = false;
-    if (const char* screenshotPath = std::getenv("WOWEE_REPLAY_SCREENSHOT_PATH")) {
-        if (*screenshotPath) {
-            replayScreenshotPath_ = screenshotPath;
-            replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
-            if (const char* screenshotMs = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS")) {
-                if (*screenshotMs) {
-                    char* end = nullptr;
-                    double ms = std::strtod(screenshotMs, &end);
-                    if (end != screenshotMs && ms >= 0.0) {
-                        double startMs = static_cast<double>(replay_->startMs());
-                        double endMs = static_cast<double>(replay_->endMs());
-                        double targetMs = (ms >= startMs && ms <= endMs)
-                            ? ms
-                            : startMs + ms;
-                        replayScreenshotTargetMs_ = std::clamp(targetMs, startMs, endMs);
-                        LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
-                                 " at replay +",
-                                 (replayScreenshotTargetMs_ - startMs), "ms");
-                    }
-                }
-            }
-            if (replayScreenshotTargetMs_ < 0.0) {
-                replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+    if (replayScreenshotRequested) {
+        replayScreenshotPath_ = replayScreenshotPathEnv;
+        replayScreenshotExitAfterCapture_ = envFlagEnabled("WOWEE_REPLAY_SCREENSHOT_EXIT", false);
+        if (replayScreenshotHasTargetMs) {
+            char* end = nullptr;
+            double ms = std::strtod(replayScreenshotMsEnv, &end);
+            if (end != replayScreenshotMsEnv && ms >= 0.0) {
+                double startMs = static_cast<double>(replay_->startMs());
+                double endMs = static_cast<double>(replay_->endMs());
+                double targetMs = (ms >= startMs && ms <= endMs)
+                    ? ms
+                    : startMs + ms;
+                replayScreenshotTargetMs_ = std::clamp(targetMs, startMs, endMs);
                 LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
-                         " in ", replayScreenshotFramesRemaining_, " frame(s)");
+                         " at replay +",
+                         (replayScreenshotTargetMs_ - startMs), "ms");
             }
+        }
+        if (replayScreenshotTargetMs_ < 0.0) {
+            replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);
+            LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                     " in ", replayScreenshotFramesRemaining_, " frame(s)");
         }
     }
 
