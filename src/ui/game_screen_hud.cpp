@@ -98,6 +98,19 @@ namespace {
         return "Unknown";
     }
 
+    uint64_t getUnitTargetGuid(const wowee::game::Entity& entity) {
+        const auto& fields = entity.getFields();
+        auto loIt = fields.find(wowee::game::fieldIndex(wowee::game::UF::UNIT_FIELD_TARGET_LO));
+        auto hiIt = fields.find(wowee::game::fieldIndex(wowee::game::UF::UNIT_FIELD_TARGET_HI));
+        uint32_t lo = (loIt != fields.end()) ? loIt->second : 0;
+        uint32_t hi = (hiIt != fields.end()) ? hiIt->second : 0;
+        if (lo == 0 && hi == 0) {
+            return 0;
+        }
+
+        return static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
+    }
+
 }
 
 namespace wowee { namespace ui {
@@ -926,20 +939,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isPlayer = (entityPtr->getType() == game::ObjectType::PLAYER);
         bool isTarget = (guid == targetGuid);
         bool isCorpse = (unit->getHealth() == 0);
+        const uint64_t unitTargetGuid = getUnitTargetGuid(*entityPtr);
+        const bool hasRecordedTarget = offlineReplay && unitTargetGuid != 0;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer) {
-            bool hasTarget = false;
-            const auto& fields = entityPtr->getFields();
-            auto targetLoIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_LO));
-            auto targetHiIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_HI));
-            if ((targetLoIt != fields.end() && targetLoIt->second != 0) ||
-                (targetHiIt != fields.end() && targetHiIt->second != 0)) {
-                hasTarget = true;
-            }
             if (offlineReplay) {
-                if (!isTarget && !hasTarget) continue;
+                if (!isTarget && unitTargetGuid == 0) continue;
             } else if (!showNameplates_) {
                 continue;
             }
@@ -1027,26 +1034,23 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Check if this unit is targeting the local player (threat indicator)
         bool isTargetingPlayer = false;
         if (unit->isHostile() && !isCorpse) {
-            const auto& fields = entityPtr->getFields();
-            auto loIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_LO));
-            if (loIt != fields.end() && loIt->second != 0) {
-                uint64_t unitTarget = loIt->second;
-                auto hiIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_HI));
-                if (hiIt != fields.end())
-                    unitTarget |= (static_cast<uint64_t>(hiIt->second) << 32);
-                isTargetingPlayer = (unitTarget == playerGuid);
-            }
+            isTargetingPlayer = (unitTargetGuid != 0 && unitTargetGuid == playerGuid);
         }
         // Creature rank for border styling (Elite=gold double border, Boss=red, Rare=silver)
         int creatureRank = -1;
         if (!isPlayer) creatureRank = gameHandler.getCreatureRank(unit->getEntry());
 
-        // Border: gold = currently selected, orange = targeting player, dark = default
-        ImU32 borderColor = isTarget
-            ? IM_COL32(255, 215, 0,  A(255))
-            : isTargetingPlayer
-              ? IM_COL32(255, 140, 0,  A(220))   // orange = this mob is targeting you
-              : IM_COL32(20,  20,  20, A(180));
+        // Border: gold = selected, orange = active targeting, dark = default.
+        ImU32 borderColor = IM_COL32(20, 20, 20, A(180));
+        if (hasRecordedTarget) {
+            borderColor = IM_COL32(255, 110, 45, A(230));
+        }
+        if (isTargetingPlayer) {
+            borderColor = IM_COL32(255, 140, 0, A(220));
+        }
+        if (isTarget) {
+            borderColor = IM_COL32(255, 215, 0, A(255));
+        }
 
         // Bar geometry
         const float barW = 80.0f * settingsPanel_.nameplateScale_;
@@ -1332,6 +1336,15 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
+        }
+        if (hasRecordedTarget) {
+            auto targetEntity = gameHandler.getEntityManager().getEntity(unitTargetGuid);
+            std::string targetName = targetEntity ? getEntityName(targetEntity) : "target";
+            if (targetName.empty() || targetName == "Unknown") {
+                targetName = "target";
+            }
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "target: " + targetName;
         }
         if (!subLabel.empty()) nameY -= 10.0f;  // shift name up for sub-label line
 
