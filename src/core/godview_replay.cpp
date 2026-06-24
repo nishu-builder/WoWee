@@ -285,6 +285,7 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     paused_ = false;
     cameraFollowEnabled_ = false;
     focusedPlayerGuid_ = 0;
+    focusedEventTargetGuid_ = 0;
 
     LOG_INFO("Godview replay active map: ", mapId_,
              " snapshots=", recording_.snapshotCountForMap(mapId_),
@@ -320,6 +321,7 @@ void GodviewReplay::start() {
     replayMountDisplayIds_.clear();
     replayMountSpawnQueued_.clear();
     nextReplayMountGuid_ = kReplayMountGuidStart;
+    focusedEventTargetGuid_ = 0;
 }
 
 void GodviewReplay::setCurrentMs(double value) {
@@ -402,6 +404,7 @@ void GodviewReplay::focusNextPlayer(int direction) {
     auto players = recording_.samplePlayers(currentMs_, mapId_);
     if (players.empty()) {
         focusedPlayerGuid_ = 0;
+        focusedEventTargetGuid_ = 0;
         cameraFollowEnabled_ = false;
         return;
     }
@@ -426,6 +429,7 @@ void GodviewReplay::focusNextPlayer(int direction) {
     }
 
     focusedPlayerGuid_ = players[index].player.guid;
+    focusedEventTargetGuid_ = 0;
     cameraFollowEnabled_ = true;
     LOG_INFO("Replay camera focus: ", players[index].player.name,
              " guid=", players[index].player.rawGuid.empty()
@@ -460,6 +464,7 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
                     continue;
                 }
                 focusedPlayerGuid_ = player.guid;
+                focusedEventTargetGuid_ = 0;
                 LOG_INFO("Replay camera focus: ", player.name,
                          " guid=", player.rawGuid.empty()
                             ? std::to_string(player.guid)
@@ -475,9 +480,13 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
 bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
     auto players = recording_.samplePlayers(currentMs_, mapId_);
     if (players.empty()) return false;
+    focusedEventTargetGuid_ = 0;
 
-    auto setFocusedPlayer = [this](const Player& player, const char* reason) {
+    auto setFocusedPlayer = [this](const Player& player,
+                                   const char* reason,
+                                   uint64_t eventTargetGuid = 0) {
         focusedPlayerGuid_ = player.guid;
+        focusedEventTargetGuid_ = eventTargetGuid;
         LOG_INFO("Replay camera focus: ", player.name,
                  " guid=", player.rawGuid.empty()
                     ? std::to_string(player.guid)
@@ -502,7 +511,9 @@ bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
             for (const auto& sampled : players) {
                 if (creature.creature.targetGuid &&
                     sampled.player.guid == *creature.creature.targetGuid) {
-                    return setFocusedPlayer(sampled.player, "event death target");
+                    return setFocusedPlayer(sampled.player,
+                                            "event death target",
+                                            creature.creature.guid);
                 }
 
                 const float dx = sampled.player.x - creature.creature.x;
@@ -516,7 +527,9 @@ bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
             }
 
             if (nearestPlayer) {
-                return setFocusedPlayer(*nearestPlayer, "event death nearest");
+                return setFocusedPlayer(*nearestPlayer,
+                                        "event death nearest",
+                                        creature.creature.guid);
             }
         }
 
@@ -610,8 +623,12 @@ std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget
                                              selected->player.y,
                                              selected->player.z);
 
-    if (selected->player.targetGuid) {
-        target.targetGuid = *selected->player.targetGuid;
+    const uint64_t cameraTargetGuid = focusedEventTargetGuid_ != 0
+        ? focusedEventTargetGuid_
+        : selected->player.targetGuid.value_or(0);
+
+    if (cameraTargetGuid != 0) {
+        target.targetGuid = cameraTargetGuid;
         for (const auto& player : players) {
             if (player.player.guid != target.targetGuid) continue;
             target.hasTarget = true;

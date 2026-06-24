@@ -104,6 +104,7 @@ private:
     bool overlayVisible_ = true;
     bool cameraFollowEnabled_ = false;
     uint64_t focusedPlayerGuid_ = 0;
+    uint64_t focusedEventTargetGuid_ = 0;
     std::unordered_set<uint64_t> activePlayerGuids_;
     std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;

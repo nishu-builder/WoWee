@@ -218,6 +218,9 @@ Replay mode now uses Coworld v2 identity fields when available:
 - When the focused player has a recorded target that is also present in the
   sampled frame, the follow camera frames the player-target midpoint and backs
   out far enough to keep the engagement readable.
+- When `WOWEE_REPLAY_FOCUS_PLAYER=death` focuses the nearest player to a dead
+  creature, the follow camera treats that corpse as the event target even if the
+  player's recorded target field has already cleared.
 - Forces offline replay nameplates on for recorded players, keeps player labels
   visible from the high observer camera, and limits default creature labels to
   selected, combat, or target-bearing units so dense captures remain readable.
@@ -284,7 +287,8 @@ recorded player name/guid to start with the observer camera following that
 player. `event` selects a player involved in the current target-or-combat sample;
 `target` selects a player involved in the current target-bearing sample; `combat`
 selects a player involved in the current combat sample; `death` selects a dead
-player or the nearest player to a dead creature. This is useful with
+player or the nearest player to a dead creature, and frames that dead creature
+as the event target when it is present in the sampled frame. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
