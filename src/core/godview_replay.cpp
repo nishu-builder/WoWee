@@ -1219,6 +1219,24 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
     std::unordered_set<uint64_t> activeCreatures;
     activeCreatures.reserve(creatures.size());
 
+    auto activeFocusedEventTarget = [&](uint64_t playerGuid) -> std::optional<uint64_t> {
+        if (playerGuid != focusedPlayerGuid_ || focusedEventTargetGuid_ == 0) {
+            return std::nullopt;
+        }
+
+        for (const auto& sampled : players) {
+            if (sampled.player.guid == focusedEventTargetGuid_) {
+                return focusedEventTargetGuid_;
+            }
+        }
+        for (const auto& sampled : creatures) {
+            if (sampled.creature.guid == focusedEventTargetGuid_) {
+                return focusedEventTargetGuid_;
+            }
+        }
+        return std::nullopt;
+    };
+
     for (const auto& sampled : players) {
         const Player& player = sampled.player;
         activePlayers.insert(player.guid);
@@ -1259,7 +1277,8 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_HEALTH, player.hp);
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_MAXHEALTH, std::max<uint32_t>(1, player.maxHp));
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_LEVEL, player.level);
-        setTargetFields(*entity, player.targetGuid);
+        const auto eventTargetGuid = activeFocusedEventTarget(player.guid);
+        setTargetFields(*entity, eventTargetGuid ? eventTargetGuid : player.targetGuid);
         syncReplayMountForPlayer(entitySpawner, player, canonical, canonicalYaw);
 
         if (useDisplayModel) {

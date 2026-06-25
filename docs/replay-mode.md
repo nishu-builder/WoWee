@@ -241,6 +241,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   reticle, and high-contrast combat color between visible target-bearing units
   and their current target so god-view captures show engagement relationships at
   a glance.
+- Feeds focused `damage` / `death` event targets into that same replay
+  nameplate/tether path while the target is present, even if the recorder's
+  normal target field has cleared in a sparse sample.
 - Caps very long creature-source tethers so distant incidental target links do
   not cut across clean god-view captures.
 - Writes target low/high fields from `target_raw` when present, falling back to
