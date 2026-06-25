@@ -200,14 +200,16 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
-- Starts replay in a high observer camera centered over the first snapshot's
-  recorded players and creatures, with gravity and default floor-snap disabled
-  so the camera stays in a true god-view position.
-- Can lock the observer camera to a recorded player from the replay overlay,
-  `F`/`Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
+- Starts replay in an angled, zoomed-out follow camera behind the first recorded
+  player's facing direction, like a very distant third-person view rather than
+  a straight-down tactical view.
+- Can return to a high free observer camera from the replay overlay, `F`, or
+  `WOWEE_REPLAY_FOLLOW_CAMERA=0`; the free camera stays centered near the first
+  snapshot's recorded players and creatures, with gravity and default floor-snap
+  disabled so it remains a true god-view pose.
+- Can lock the follow camera to another recorded player from the replay overlay,
+  `Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
   deterministic inspection captures.
-- Uses an angled, zoomed-out follow camera behind the focused player's recorded
-  facing direction, rather than a straight-down tactical view.
 - Can start at the first target-or-combat snapshot with
   `WOWEE_REPLAY_START_EVENT=1`, which is useful for automated screenshot smokes
   that should land on action without hardcoding a timestamp.
@@ -225,8 +227,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   creature, the follow camera treats that corpse as the event target even if the
   player's recorded target field has already cleared.
 - Forces offline replay nameplates on for recorded players, keeps player labels
-  visible from the high observer camera, and limits default creature labels to
-  selected, combat, or target-bearing units so dense captures remain readable.
+  visible from the zoomed-out follow and observer cameras, and limits default
+  creature labels to selected, combat, or target-bearing units so dense captures
+  remain readable.
 - Adds a compact replay-only backing behind name/sub-label text so labels remain
   legible in god-view screenshots over bright terrain.
 - Marks replay nameplates with a red border and compact `combat` sublabel when
@@ -301,8 +304,7 @@ clean captures while keeping replay nameplates and target cues visible. The repl
 overlay can also be toggled interactively with `H`.
 
 Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, `damage`,
-`death`, or a
-recorded player name/guid to start with the observer camera following that
+`death`, or a recorded player name/guid to start the follow camera on that
 player. `event` selects a player involved in the current target-or-combat sample;
 `target` selects a player involved in the current target-bearing sample; `combat`
 selects a player involved in the current combat sample; `damage` selects the
@@ -312,6 +314,8 @@ player to a dead creature, and frames that dead creature as the event target
 when it is present in the sampled frame. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.
+Set `WOWEE_REPLAY_FOLLOW_CAMERA=0` to keep the high free observer camera instead
+of the default zoomed-out follow camera.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
 or widen the follow camera for detail-oriented screenshot smokes. Use
 `WOWEE_REPLAY_FOLLOW_STEEP_PITCH` and `WOWEE_REPLAY_FOLLOW_SHALLOW_PITCH` to

@@ -398,7 +398,10 @@ def main() -> int:
         if args.event_offset_ms is not None:
             env["WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS"] = str(args.event_offset_ms)
     focus = None
-    if not args.no_follow:
+    if args.no_follow:
+        env["WOWEE_REPLAY_FOLLOW_CAMERA"] = "0"
+    else:
+        env["WOWEE_REPLAY_FOLLOW_CAMERA"] = "1"
         focus = args.focus if args.focus is not None else (event if args.ms is None else "first")
     if focus:
         env["WOWEE_REPLAY_FOCUS_PLAYER"] = focus
