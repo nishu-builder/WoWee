@@ -204,6 +204,9 @@ bool hasReplayEvent(const GodviewRecording::Snapshot& snapshot,
         if (kind == GodviewRecording::EventKind::Combat) {
             return event.kind == "combat" || event.kind == "damage";
         }
+        if (kind == GodviewRecording::EventKind::Damage) {
+            return event.kind == "damage";
+        }
         if (kind == GodviewRecording::EventKind::Target) {
             return event.kind == "target";
         }
@@ -221,6 +224,10 @@ bool hasReplayEvent(const GodviewRecording::Snapshot& snapshot,
         }
         return std::any_of(snapshot.creatures.begin(), snapshot.creatures.end(),
                            [](const auto& creature) { return creature.dead || creature.hp == 0; });
+    }
+
+    if (kind == GodviewRecording::EventKind::Damage) {
+        return false;
     }
 
     for (const auto& player : snapshot.players) {

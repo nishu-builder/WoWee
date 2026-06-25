@@ -215,6 +215,11 @@ TEST_CASE("GodviewRecording loads v3 replay events", "[godview][recording]") {
     REQUIRE(*event.spellId == 6603);
     REQUIRE(event.critical);
     REQUIRE(*event.critical == false);
+
+    auto firstDamage = recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Damage, 1);
+    REQUIRE(firstDamage);
+    REQUIRE(*firstDamage == 1000);
+    REQUIRE_FALSE(recording.findEventMs(999.0, 0, GodviewRecording::EventKind::Damage, 1));
 }
 
 TEST_CASE("GodviewRecording finds explicit v3 replay death events", "[godview][recording]") {

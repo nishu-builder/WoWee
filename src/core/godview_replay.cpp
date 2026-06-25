@@ -36,6 +36,8 @@ constexpr float kReplayMountSeatMaxZOffset = 3.25f;
 constexpr float kReplayInferredAttackMaxRange = 45.0f;
 constexpr float kReplayInferredAttackStartAlpha = 0.02f;
 constexpr float kReplayInferredAttackEndAlpha = 0.85f;
+constexpr double kReplayDamageTextWindowMs = 750.0;
+constexpr double kReplayEventFutureSlackMs = 0.5;
 
 struct ReplayAttackPulse {
     uint64_t sourceGuid = 0;
@@ -170,6 +172,40 @@ bool hasReplayAttackPulseForTarget(const std::unordered_map<uint64_t, ReplayAtta
 
 bool isReplayDamageEvent(const GodviewRecording::ReplayEvent& event) {
     return event.kind == "damage" && event.amount > 0 && event.sourceGuid != 0 && event.targetGuid != 0;
+}
+
+uint64_t replayDamageTextKey(uint64_t snapshotMs, const GodviewRecording::ReplayEvent& event) {
+    uint64_t hash = snapshotMs ^ 0x9e3779b97f4a7c15ull;
+    auto mix = [&hash](uint64_t value) {
+        hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    };
+    mix(event.sourceGuid);
+    mix(event.targetGuid);
+    mix(event.amount);
+    return hash != 0 ? hash : 1;
+}
+
+template <typename Callback>
+bool forEachNearbyReplayEventSnapshot(const GodviewRecording& recording,
+                                      const GodviewRecording::SnapshotPair& pair,
+                                      double currentMs,
+                                      double windowMs,
+                                      Callback callback) {
+    if (!pair.valid) return false;
+
+    const std::array<size_t, 2> indices{pair.prev, pair.next};
+    for (size_t slot = 0; slot < indices.size(); ++slot) {
+        if (slot > 0 && indices[slot] == indices[0]) continue;
+
+        const auto& snapshot = recording.snapshots()[indices[slot]];
+        const double snapshotMs = static_cast<double>(snapshot.ms);
+        if (snapshotMs > currentMs + kReplayEventFutureSlackMs) {
+            continue;
+        }
+        if (currentMs - snapshotMs > windowMs) continue;
+        if (callback(snapshot)) return true;
+    }
+    return false;
 }
 
 void addExplicitReplayDamagePulses(const GodviewRecording::Snapshot& next,
@@ -660,6 +696,7 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     lastCreatureDead_.clear();
     lastMountMoving_.clear();
     lastReplayAttackPulseKey_.clear();
+    emittedReplayDamageTextKeys_.clear();
     activeReplayAttackGuids_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
@@ -721,6 +758,7 @@ void GodviewReplay::start() {
     lastCreatureDead_.clear();
     lastMountMoving_.clear();
     lastReplayAttackPulseKey_.clear();
+    emittedReplayDamageTextKeys_.clear();
     activeReplayAttackGuids_.clear();
     lastPlayerEquipmentHash_.clear();
     displayOverridePlayerGuids_.clear();
@@ -737,7 +775,37 @@ void GodviewReplay::setCurrentMs(double value) {
         currentMs_ = 0.0;
         return;
     }
-    currentMs_ = std::clamp(value, static_cast<double>(startMs_), static_cast<double>(endMs_));
+    const double nextMs = std::clamp(value, static_cast<double>(startMs_), static_cast<double>(endMs_));
+    if (nextMs + 1.0 < currentMs_) {
+        emittedReplayDamageTextKeys_.clear();
+    }
+    currentMs_ = nextMs;
+}
+
+void GodviewReplay::emitReplayDamageText(game::GameHandler& gameHandler) {
+    GodviewRecording::SnapshotPair pair = recording_.findSnapshotPair(currentMs_, mapId_);
+    forEachNearbyReplayEventSnapshot(recording_,
+                                     pair,
+                                     currentMs_,
+                                     kReplayDamageTextWindowMs,
+                                     [&](const GodviewRecording::Snapshot& snapshot) {
+        for (const auto& event : snapshot.events) {
+            if (!isReplayDamageEvent(event)) continue;
+            const uint64_t key = replayDamageTextKey(snapshot.ms, event);
+            if (emittedReplayDamageTextKeys_.count(key) > 0) continue;
+
+            const bool sourceIsPlayer = snapshot.playerByGuid.count(event.sourceGuid) > 0;
+            gameHandler.addCombatText(game::CombatTextEntry::SPELL_DAMAGE,
+                                      static_cast<int32_t>(event.amount),
+                                      event.spellId.value_or(0),
+                                      sourceIsPlayer,
+                                      0,
+                                      event.sourceGuid,
+                                      event.targetGuid);
+            emittedReplayDamageTextKeys_.insert(key);
+        }
+        return false;
+    });
 }
 
 uint64_t GodviewReplay::replayMountGuidForPlayer(uint64_t playerGuid) {
@@ -860,6 +928,9 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
     if (loweredQuery == "combat") {
         return focusEventPlayer(GodviewRecording::EventKind::Combat);
     }
+    if (loweredQuery == "damage") {
+        return focusEventPlayer(GodviewRecording::EventKind::Damage);
+    }
     if (loweredQuery == "death" || loweredQuery == "dead") {
         return focusEventPlayer(GodviewRecording::EventKind::Death);
     }
@@ -944,6 +1015,58 @@ bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
         return false;
     }
 
+    if (kind == GodviewRecording::EventKind::Damage) {
+        GodviewRecording::SnapshotPair pair = recording_.findSnapshotPair(currentMs_, mapId_);
+        auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
+        bool focused = forEachNearbyReplayEventSnapshot(
+            recording_,
+            pair,
+            currentMs_,
+            kReplayDamageTextWindowMs,
+            [&](const GodviewRecording::Snapshot& snapshot) {
+                for (const auto& event : snapshot.events) {
+                    if (!isReplayDamageEvent(event)) continue;
+                    for (const auto& sampled : players) {
+                        if (sampled.player.guid == event.sourceGuid) {
+                            return setFocusedPlayer(sampled.player, "event damage source", event.targetGuid);
+                        }
+                        if (sampled.player.guid == event.targetGuid) {
+                            return setFocusedPlayer(sampled.player, "event damage target", event.sourceGuid);
+                        }
+                    }
+
+                    const Creature* damagedCreature = nullptr;
+                    for (const auto& sampled : creatures) {
+                        if (sampled.creature.guid == event.targetGuid) {
+                            damagedCreature = &sampled.creature;
+                            break;
+                        }
+                    }
+                    if (!damagedCreature) continue;
+
+                    const Player* nearestPlayer = nullptr;
+                    float nearestDistSq = std::numeric_limits<float>::max();
+                    for (const auto& sampled : players) {
+                        const float dx = sampled.player.x - damagedCreature->x;
+                        const float dy = sampled.player.y - damagedCreature->y;
+                        const float dz = sampled.player.z - damagedCreature->z;
+                        const float distSq = dx * dx + dy * dy + dz * dz;
+                        if (distSq < nearestDistSq) {
+                            nearestDistSq = distSq;
+                            nearestPlayer = &sampled.player;
+                        }
+                    }
+                    if (nearestPlayer) {
+                        return setFocusedPlayer(*nearestPlayer, "event damage nearest", event.targetGuid);
+                    }
+                }
+                return false;
+            });
+        if (focused) {
+            return true;
+        }
+    }
+
     if (kind != GodviewRecording::EventKind::Target) {
         for (const auto& sampled : players) {
             if (sampled.player.combat) {
@@ -996,6 +1119,8 @@ bool GodviewReplay::seekEvent(GodviewRecording::EventKind kind,
         eventName = "combat";
     } else if (kind == GodviewRecording::EventKind::Target) {
         eventName = "target";
+    } else if (kind == GodviewRecording::EventKind::Damage) {
+        eventName = "damage";
     } else if (kind == GodviewRecording::EventKind::Death) {
         eventName = "death";
     }
@@ -1349,11 +1474,11 @@ void GodviewReplay::update(float deltaTime,
 void GodviewReplay::syncRender(game::GameHandler& gameHandler,
                                EntitySpawner& entitySpawner,
                                rendering::Renderer& renderer) {
-    (void)gameHandler;
     auto* charRenderer = renderer.getCharacterRenderer();
     if (!charRenderer) return;
 
     const auto attackPulses = inferReplayAttackPulses(recording_, currentMs_, mapId_);
+    emitReplayDamageText(gameHandler);
     std::unordered_set<uint64_t> currentlyAttacking;
 
     auto players = recording_.samplePlayers(currentMs_, mapId_);

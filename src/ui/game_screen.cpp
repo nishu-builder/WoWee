@@ -329,6 +329,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             renderMinimapMarkers(gameHandler);
         }
         chatPanel_.renderBubbles(gameHandler);
+        combatUI_.renderCombatText(gameHandler);
         ImGui::GetStyle().Alpha = prevAlpha;
         return;
     }

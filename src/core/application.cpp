@@ -123,6 +123,7 @@ std::optional<GodviewRecording::EventKind> replayEventKindFromEnv(const char* ke
     });
     if (value == "target") return GodviewRecording::EventKind::Target;
     if (value == "combat") return GodviewRecording::EventKind::Combat;
+    if (value == "damage") return GodviewRecording::EventKind::Damage;
     if (value == "death" || value == "dead") return GodviewRecording::EventKind::Death;
     return GodviewRecording::EventKind::TargetOrCombat;
 }
@@ -2529,6 +2530,8 @@ bool Application::startReplayMode() {
                 LOG_WARNING("Replay combat event requested, but no combat snapshot was found");
             } else if (eventKind == GodviewRecording::EventKind::Target) {
                 LOG_WARNING("Replay target event requested, but no target snapshot was found");
+            } else if (eventKind == GodviewRecording::EventKind::Damage) {
+                LOG_WARNING("Replay damage event requested, but no damage event was found");
             } else if (eventKind == GodviewRecording::EventKind::Death) {
                 LOG_WARNING("Replay death event requested, but no death snapshot was found");
             } else {

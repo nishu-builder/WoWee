@@ -212,7 +212,8 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Can seek screenshot smokes to the first target-or-combat snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=1`, the first target snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, the first combat snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, or the first explicit/snapshot death
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, the first explicit damage event with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=damage`, or the first explicit/snapshot death
   event with `WOWEE_REPLAY_SCREENSHOT_EVENT=death`, when no explicit screenshot
   timestamp is set.
 - When the focused player has a recorded target that is also present in the
@@ -248,8 +249,9 @@ Replay mode now uses Coworld v2 identity fields when available:
   equipment to pick a player combat-ready pose when idle in combat, stand
   otherwise, and death animation when a creature snapshot is marked dead.
 - Uses schema v3 `events` records as explicit replay cues: `damage` drives short
-  replay-only attack pulses, and `death` is accepted by replay event seeking and
-  screenshot preflight. Older v1/v2 recordings still infer pulses when a player
+  replay-only attack pulses plus floating damage numbers, and `death` is
+  accepted by replay event seeking and screenshot preflight. Older v1/v2
+  recordings still infer pulses when a player
   or creature's recorded target loses HP between adjacent authoritative
   snapshots. If target fields have already cleared, replay mode falls back to
   the nearest combat unit within normal combat range so sparse recorder samples
@@ -277,7 +279,8 @@ frames to wait before capture when no timestamp is supplied; it defaults to
 Set `WOWEE_REPLAY_SCREENSHOT_EVENT=1` to seek the replay to the first
 target-or-combat snapshot before scheduling a screenshot. Use
 `WOWEE_REPLAY_SCREENSHOT_EVENT=target` for the first target-bearing snapshot, or
-`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot, or
+`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot,
+`WOWEE_REPLAY_SCREENSHOT_EVENT=damage` for the first explicit damage event, or
 `WOWEE_REPLAY_SCREENSHOT_EVENT=death` for the first explicit death event or
 player/creature death snapshot.
 This is useful for recordings where the interesting action time changes between
@@ -289,13 +292,16 @@ Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
 clean captures while keeping replay nameplates and target cues visible. The replay
 overlay can also be toggled interactively with `H`.
 
-Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, `death`, or a
+Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, `damage`,
+`death`, or a
 recorded player name/guid to start with the observer camera following that
 player. `event` selects a player involved in the current target-or-combat sample;
 `target` selects a player involved in the current target-bearing sample; `combat`
-selects a player involved in the current combat sample; `death` selects a dead
-player or the nearest player to a dead creature, and frames that dead creature
-as the event target when it is present in the sampled frame. This is useful with
+selects a player involved in the current combat sample; `damage` selects the
+source or nearest player around the current explicit damage event and frames the
+damaged unit as the event target; `death` selects a dead player or the nearest
+player to a dead creature, and frames that dead creature as the event target
+when it is present in the sampled frame. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
@@ -308,7 +314,7 @@ For repeatable local smokes, `tools/replay_screenshot_smoke.py` wraps those
 environment variables, runs `wowee --replay`, and validates that the resulting
 PNG has plausible dimensions and nonblank pixel variation. When `--event` is
 set, it first scans the JSONL on WoWee's active replay map and fails early if the
-recording has no matching `target`, `combat`, or `death` sample:
+recording has no matching `target`, `combat`, `damage`, or `death` sample:
 
 ```bash
 python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
@@ -318,17 +324,20 @@ python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
   --output build/bin/wowee_replay_death.png
 ```
 
-Use `--ms <server-ms>` for deterministic captures inside a known damage or
-movement interval. Explicit `--ms` captures skip event preflight and do not seek
-to `--event`:
+Use `--event damage` for deterministic captures at the first explicit schema v3
+damage event:
 
 ```bash
 python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
   --data-path /path/to/extracted/classic-data \
-  --ms 28560 \
-  --focus combat \
+  --event damage \
+  --focus damage \
   --output build/bin/wowee_replay_damage.png
 ```
+
+Use `--ms <server-ms>` for deterministic captures inside a known movement
+interval. Explicit `--ms` captures skip event preflight and do not seek to
+`--event`.
 
 Use `--validate-only --output <png>` to re-check an existing screenshot without
 launching WoWee.

@@ -74,6 +74,7 @@ public:
     void renderOverlay();
 
 private:
+    void emitReplayDamageText(game::GameHandler& gameHandler);
     void applyGameState(game::GameHandler& gameHandler,
                         EntitySpawner& entitySpawner,
                         const std::vector<InterpolatedPlayer>& players,
@@ -115,6 +116,7 @@ private:
     std::unordered_map<uint64_t, bool> lastCreatureDead_;
     std::unordered_map<uint64_t, bool> lastMountMoving_;
     std::unordered_map<uint64_t, uint64_t> lastReplayAttackPulseKey_;
+    std::unordered_set<uint64_t> emittedReplayDamageTextKeys_;
     std::unordered_set<uint64_t> activeReplayAttackGuids_;
     std::unordered_map<uint64_t, size_t> lastPlayerEquipmentHash_;
     std::unordered_set<uint64_t> displayOverridePlayerGuids_;

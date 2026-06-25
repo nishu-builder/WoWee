@@ -16,6 +16,7 @@ public:
         TargetOrCombat,
         Target,
         Combat,
+        Damage,
         Death,
     };
 
