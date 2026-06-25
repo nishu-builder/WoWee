@@ -1137,7 +1137,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         if (hasReplayEventCue) {
             borderColor = replayEventCue == "death"
-                ? IM_COL32(210, 210, 210, A(245))
+                ? IM_COL32(255, 118, 118, A(245))
                 : IM_COL32(255, 230, 70, A(245));
         }
         if (isReplayTargeted) {
@@ -1576,7 +1576,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ImU32 subColor = IM_COL32(180, 180, 180, A(200));
             if (hasReplayEventCue) {
                 subColor = replayEventCue == "death"
-                    ? IM_COL32(230, 230, 230, A(235))
+                    ? IM_COL32(255, 118, 118, A(235))
                     : IM_COL32(255, 230, 70, A(235));
             }
             drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());

@@ -280,6 +280,109 @@ def unique_color_count(pixels: bytes, color_type: int, minimum: int) -> int:
     return len(colors)
 
 
+def iter_rgb_pixels(width: int, height: int, color_type: int, pixels: bytes):
+    if color_type == 0:
+        for value in pixels:
+            yield value, value, value
+        return
+    if color_type == 2:
+        for offset in range(0, len(pixels), 3):
+            yield pixels[offset], pixels[offset + 1], pixels[offset + 2]
+        return
+    if color_type == 4:
+        for offset in range(0, len(pixels), 2):
+            value = pixels[offset]
+            yield value, value, value
+        return
+    if color_type == 6:
+        for offset in range(0, len(pixels), 4):
+            yield pixels[offset], pixels[offset + 1], pixels[offset + 2]
+        return
+    raise PngError(f"unsupported PNG color type: {color_type}")
+
+
+def cue_color_matches(kind: str, r: int, g: int, b: int) -> bool:
+    if kind == "damage":
+        return r >= 210 and g >= 170 and 35 <= b <= 170 and r >= g and g - b >= 55
+    if kind == "death":
+        return (
+            r >= 215
+            and 75 <= g <= 170
+            and 75 <= b <= 170
+            and abs(g - b) <= 45
+            and r - g >= 55
+            and r - b >= 55
+        )
+    raise PngError(f"unsupported event cue color kind: {kind}")
+
+
+def has_dark_background_near(
+    dark_integral: list[int],
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    radius: int,
+) -> bool:
+    x0 = max(0, x - radius)
+    y0 = max(0, y - radius)
+    x1 = min(width, x + radius + 1)
+    y1 = min(height, y + radius + 1)
+    stride = width + 1
+    total = (
+        dark_integral[y1 * stride + x1]
+        - dark_integral[y0 * stride + x1]
+        - dark_integral[y1 * stride + x0]
+        + dark_integral[y0 * stride + x0]
+    )
+    return total > 0
+
+
+def cue_color_pixel_count(
+    width: int,
+    height: int,
+    color_type: int,
+    pixels: bytes,
+    kind: str,
+    dark_radius: int = 6,
+) -> int:
+    rgbs = list(iter_rgb_pixels(width, height, color_type, pixels))
+    dark_integral = [0] * ((width + 1) * (height + 1))
+    for y in range(height):
+        row_total = 0
+        for x in range(width):
+            r, g, b = rgbs[y * width + x]
+            if r <= 55 and g <= 65 and b <= 75:
+                row_total += 1
+            dark_integral[(y + 1) * (width + 1) + x + 1] = (
+                dark_integral[y * (width + 1) + x + 1] + row_total
+            )
+
+    count = 0
+    for y in range(height):
+        for x in range(width):
+            r, g, b = rgbs[y * width + x]
+            if not cue_color_matches(kind, r, g, b):
+                continue
+            if has_dark_background_near(dark_integral, width, height, x, y, dark_radius):
+                count += 1
+    return count
+
+
+def validate_event_cue_color(path: Path, kind: str, minimum_pixels: int) -> None:
+    width, height, color_type, pixels = parse_png(path)
+    count = cue_color_pixel_count(width, height, color_type, pixels, kind)
+    if count < minimum_pixels:
+        raise PngError(
+            f"{kind} event cue color not visible enough: {count} pixels near nameplate "
+            f"background, expected at least {minimum_pixels}"
+        )
+    print(
+        f"OK: {path} has {count} {kind} event cue color pixels "
+        f"near nameplate backgrounds >= {minimum_pixels}"
+    )
+
+
 def validate_png(path: Path, min_width: int, min_height: int, min_unique_colors: int) -> None:
     if not path.exists():
         raise PngError(f"screenshot was not written: {path}")
@@ -295,6 +398,19 @@ def validate_png(path: Path, min_width: int, min_height: int, min_unique_colors:
         f"OK: {path} is {width}x{height}, color_type={color_type}, "
         f"unique_colors>={unique_colors}"
     )
+
+
+def validate_capture(
+    path: Path,
+    min_width: int,
+    min_height: int,
+    min_unique_colors: int,
+    expect_cue_color: str | None,
+    min_cue_color_pixels: int,
+) -> None:
+    validate_png(path, min_width, min_height, min_unique_colors)
+    if expect_cue_color:
+        validate_event_cue_color(path, expect_cue_color, min_cue_color_pixels)
 
 
 def default_output_path(wowee: Path) -> Path:
@@ -326,6 +442,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-width", type=int, default=640)
     parser.add_argument("--min-height", type=int, default=360)
     parser.add_argument("--min-unique-colors", type=int, default=32)
+    parser.add_argument(
+        "--expect-cue-color",
+        choices=("damage", "death"),
+        default=None,
+        help="Require the captured PNG to include visible replay event cue color near nameplates.",
+    )
+    parser.add_argument(
+        "--min-cue-color-pixels",
+        type=int,
+        default=10,
+        help="Minimum cue-colored pixels near dark nameplate backgrounds when --expect-cue-color is set.",
+    )
     parser.add_argument("--validate-only", action="store_true", help="Validate --output without launching WoWee.")
     parser.add_argument("--no-clean-capture", action="store_true", help="Keep replay overlay/minimap chrome visible.")
     parser.add_argument(
@@ -343,7 +471,18 @@ def main() -> int:
     output = (args.output.resolve() if args.output else default_output_path(wowee))
 
     if args.validate_only:
-        validate_png(output, args.min_width, args.min_height, args.min_unique_colors)
+        try:
+            validate_capture(
+                output,
+                args.min_width,
+                args.min_height,
+                args.min_unique_colors,
+                args.expect_cue_color,
+                args.min_cue_color_pixels,
+            )
+        except PngError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     if not wowee.exists():
@@ -436,7 +575,14 @@ def main() -> int:
             stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
             print(stderr, end="", file=sys.stderr)
         try:
-            validate_png(output, args.min_width, args.min_height, args.min_unique_colors)
+            validate_capture(
+                output,
+                args.min_width,
+                args.min_height,
+                args.min_unique_colors,
+                args.expect_cue_color,
+                args.min_cue_color_pixels,
+            )
         except PngError as png_exc:
             print(f"error: WoWee timed out after {args.timeout:g}s and no valid screenshot was available: {png_exc}",
                   file=sys.stderr)
@@ -453,7 +599,14 @@ def main() -> int:
         return result.returncode
 
     try:
-        validate_png(output, args.min_width, args.min_height, args.min_unique_colors)
+        validate_capture(
+            output,
+            args.min_width,
+            args.min_height,
+            args.min_unique_colors,
+            args.expect_cue_color,
+            args.min_cue_color_pixels,
+        )
     except PngError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

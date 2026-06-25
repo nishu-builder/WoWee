@@ -150,6 +150,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--follow-height", type=float, default=None, help="Replay follow camera height.")
     parser.add_argument("--follow-steep-pitch", type=float, default=None, help="Steepest replay follow pitch in degrees.")
     parser.add_argument("--follow-shallow-pitch", type=float, default=None, help="Shallowest replay follow pitch in degrees.")
+    parser.add_argument(
+        "--require-event-cue-colors",
+        action="store_true",
+        help="Require semantic damage/death cue colors in event-offset captures while their cues should be active.",
+    )
+    parser.add_argument("--damage-cue-window-ms", type=float, default=1200.0)
+    parser.add_argument("--death-cue-window-ms", type=float, default=3500.0)
+    parser.add_argument(
+        "--min-cue-color-pixels",
+        type=int,
+        default=None,
+        help="Override the per-event cue color pixel thresholds.",
+    )
+    parser.add_argument("--min-damage-cue-color-pixels", type=int, default=80)
+    parser.add_argument("--min-death-cue-color-pixels", type=int, default=10)
     return parser.parse_args()
 
 
@@ -316,6 +331,26 @@ def append_camera_args(command: list[str], args: argparse.Namespace) -> None:
         command.extend(["--follow-shallow-pitch", str(args.follow_shallow_pitch)])
 
 
+def expected_cue_color(args: argparse.Namespace, event: str, offset_ms: float) -> str | None:
+    if not args.require_event_cue_colors:
+        return None
+    if event == "damage" and offset_ms <= args.damage_cue_window_ms:
+        return "damage"
+    if event == "death" and offset_ms <= args.death_cue_window_ms:
+        return "death"
+    return None
+
+
+def min_cue_color_pixels(args: argparse.Namespace, event: str) -> int:
+    if args.min_cue_color_pixels is not None:
+        return args.min_cue_color_pixels
+    if event == "damage":
+        return args.min_damage_cue_color_pixels
+    if event == "death":
+        return args.min_death_cue_color_pixels
+    return 10
+
+
 def active_map_timeline(path: Path, samples: int) -> tuple[int, list[float]]:
     if samples <= 0:
         raise smoke.ReplayError("--timeline-samples must be positive")
@@ -386,6 +421,10 @@ def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Pa
     if args.keep_overlay:
         command.append("--no-clean-capture")
     append_camera_args(command, args)
+    cue_color = expected_cue_color(args, event, offset_ms)
+    if cue_color:
+        command.extend(["--expect-cue-color", cue_color])
+        command.extend(["--min-cue-color-pixels", str(min_cue_color_pixels(args, cue_color))])
 
     print("running:", " ".join(command), flush=True)
     subprocess.run(command, check=True)
