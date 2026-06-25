@@ -397,6 +397,18 @@ def active_map_timeline(path: Path, samples: int) -> tuple[int, list[float]]:
     ]
 
 
+def run_smoke_command(command: list[str]) -> int:
+    print("running:", " ".join(command), flush=True)
+    result = subprocess.run(command, check=False)
+    if result.returncode != 0:
+        print(
+            f"error: replay screenshot smoke failed with status {result.returncode}: "
+            + " ".join(command),
+            file=sys.stderr,
+        )
+    return result.returncode
+
+
 def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Path) -> None:
     script = Path(__file__).with_name("replay_screenshot_smoke.py")
     command = [
@@ -426,8 +438,9 @@ def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Pa
         command.extend(["--expect-cue-color", cue_color])
         command.extend(["--min-cue-color-pixels", str(min_cue_color_pixels(args, cue_color))])
 
-    print("running:", " ".join(command), flush=True)
-    subprocess.run(command, check=True)
+    status = run_smoke_command(command)
+    if status != 0:
+        raise SystemExit(status)
 
 
 def run_ms_smoke(args: argparse.Namespace, ms: float, output: Path) -> None:
@@ -453,8 +466,9 @@ def run_ms_smoke(args: argparse.Namespace, ms: float, output: Path) -> None:
         command.append("--no-clean-capture")
     append_camera_args(command, args)
 
-    print("running:", " ".join(command), flush=True)
-    subprocess.run(command, check=True)
+    status = run_smoke_command(command)
+    if status != 0:
+        raise SystemExit(status)
 
 
 def validate_frame_deltas(
@@ -518,6 +532,16 @@ def assemble_sheet(
     smoke.validate_png(output, 320, 180, 32)
 
 
+def finish_sheet(frames: list[tuple[str, Path]], args: argparse.Namespace) -> int:
+    try:
+        assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
+    except (ValueError, smoke.PngError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"OK: wrote replay contact sheet {args.output}")
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     explicit_modes = sum(
@@ -539,9 +563,7 @@ def main() -> int:
             output = frames_dir / ms_frame_name(ms)
             run_ms_smoke(args, ms, output)
             frames.append((f"MS{format_ms(ms)}", output))
-        assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
-        print(f"OK: wrote replay contact sheet {args.output}")
-        return 0
+        return finish_sheet(frames, args)
 
     if args.timeline_samples is not None:
         try:
@@ -553,9 +575,7 @@ def main() -> int:
             output = frames_dir / timeline_frame_name(index, ms)
             run_ms_smoke(args, ms, output)
             frames.append((f"T{index} M{active_map} MS{format_ms(ms)}", output))
-        assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
-        print(f"OK: wrote replay contact sheet {args.output}")
-        return 0
+        return finish_sheet(frames, args)
 
     for event in events:
         normalized_event = smoke.normalize_event(event)
@@ -573,9 +593,7 @@ def main() -> int:
             label = format_capture_label(normalized_event, offset_ms, active_map, event_ms + offset_ms)
             frames.append((label, output))
 
-    assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
-    print(f"OK: wrote replay contact sheet {args.output}")
-    return 0
+    return finish_sheet(frames, args)
 
 
 if __name__ == "__main__":
