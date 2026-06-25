@@ -366,6 +366,8 @@ public:
     // Offline replay metadata. Normal network updates leave this false.
     bool isRecordedCombat() const { return recordedCombat; }
     void setRecordedCombat(bool v) { recordedCombat = v; }
+    const std::string& getReplayEventCue() const { return replayEventCue; }
+    void setReplayEventCue(const std::string& cue) { replayEventCue = cue; }
 
 protected:
     std::string name;
@@ -385,6 +387,7 @@ protected:
     uint32_t factionTemplate = 0;
     bool hostile = false;
     bool recordedCombat = false;
+    std::string replayEventCue;
 };
 
 /**

@@ -37,6 +37,8 @@ constexpr float kReplayInferredAttackMaxRange = 45.0f;
 constexpr float kReplayInferredAttackStartAlpha = 0.02f;
 constexpr float kReplayInferredAttackEndAlpha = 0.85f;
 constexpr double kReplayDamageTextWindowMs = 750.0;
+constexpr double kReplayDamageCueWindowMs = 1200.0;
+constexpr double kReplayDeathCueWindowMs = 3500.0;
 constexpr double kReplayEventTargetContextWindowMs = 2500.0;
 constexpr double kReplayEventFutureSlackMs = 0.5;
 
@@ -175,6 +177,10 @@ bool isReplayDamageEvent(const GodviewRecording::ReplayEvent& event) {
     return event.kind == "damage" && event.amount > 0 && event.sourceGuid != 0 && event.targetGuid != 0;
 }
 
+bool isReplayDeathEvent(const GodviewRecording::ReplayEvent& event) {
+    return event.kind == "death" && event.targetGuid != 0;
+}
+
 uint64_t replayDamageTextKey(uint64_t snapshotMs, const GodviewRecording::ReplayEvent& event) {
     uint64_t hash = snapshotMs ^ 0x9e3779b97f4a7c15ull;
     auto mix = [&hash](uint64_t value) {
@@ -207,6 +213,29 @@ bool forEachNearbyReplayEventSnapshot(const GodviewRecording& recording,
         if (callback(snapshot)) return true;
     }
     return false;
+}
+
+std::unordered_map<uint64_t, std::string> activeReplayEventCues(
+    const GodviewRecording& recording,
+    double currentMs,
+    uint32_t mapId) {
+    std::unordered_map<uint64_t, std::string> cues;
+    const double maxWindowMs = std::max(kReplayDamageCueWindowMs, kReplayDeathCueWindowMs);
+    for (const auto& snapshot : recording.snapshots()) {
+        if (snapshot.map != mapId) continue;
+        const double ageMs = currentMs - static_cast<double>(snapshot.ms);
+        if (ageMs < -kReplayEventFutureSlackMs || ageMs > maxWindowMs) continue;
+
+        for (const auto& event : snapshot.events) {
+            if (isReplayDamageEvent(event) && ageMs <= kReplayDamageCueWindowMs) {
+                std::string prefix = event.critical.value_or(false) ? "crit " : "hit ";
+                cues[event.targetGuid] = prefix + std::to_string(event.amount);
+            } else if (isReplayDeathEvent(event) && ageMs <= kReplayDeathCueWindowMs) {
+                cues[event.targetGuid] = "death";
+            }
+        }
+    }
+    return cues;
 }
 
 void addExplicitReplayDamagePulses(const GodviewRecording::Snapshot& next,
@@ -1272,6 +1301,7 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
     activeCreatures.reserve(creatures.size());
 
     const auto activeEventTargetGuid = activeFocusedEventTargetGuid(players, creatures);
+    const auto replayEventCues = activeReplayEventCues(recording_, currentMs_, mapId_);
 
     for (const auto& sampled : players) {
         const Player& player = sampled.player;
@@ -1293,6 +1323,8 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         entity->setHealth(player.hp);
         entity->setMaxHealth(std::max<uint32_t>(1, player.maxHp));
         entity->setRecordedCombat(player.combat);
+        auto replayCueIt = replayEventCues.find(player.guid);
+        entity->setReplayEventCue(replayCueIt != replayEventCues.end() ? replayCueIt->second : "");
         const uint32_t playerDisplayId = player.displayId != 0 ? player.displayId : player.nativeDisplayId;
         const auto displayAppearance = entitySpawner.getHumanoidDisplayAppearance(playerDisplayId);
         const bool useDisplayModel = shouldRenderPlayerAsDisplayModel(playerDisplayId,
@@ -1437,6 +1469,8 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         entity->setHealth(hp);
         entity->setMaxHealth(std::max<uint32_t>(1, creature.maxHp));
         entity->setRecordedCombat(creature.combat);
+        auto replayCueIt = replayEventCues.find(creature.guid);
+        entity->setReplayEventCue(replayCueIt != replayEventCues.end() ? replayCueIt->second : "");
         entity->setPosition(canonical.x, canonical.y, canonical.z, canonicalYaw);
 
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_DISPLAYID, creatureDisplayId);

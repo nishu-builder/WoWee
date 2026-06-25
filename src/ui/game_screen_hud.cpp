@@ -972,13 +972,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ? gameHandler.getEntityManager().getEntity(unitTargetGuid)
             : nullptr;
         const bool recordedCombat = offlineReplay && unit->isRecordedCombat() && !isCorpse;
+        std::string replayEventCue = offlineReplay ? unit->getReplayEventCue() : "";
+        const bool hasReplayEventCue = !replayEventCue.empty();
         const bool isReplayTargeted = offlineReplay && replayTargetedGuids.count(guid) != 0;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer) {
             if (offlineReplay) {
-                if (!isTarget && unitTargetGuid == 0 && !recordedCombat && !isReplayTargeted && !isCorpse) {
+                if (!isTarget && unitTargetGuid == 0 && !recordedCombat &&
+                    !hasReplayEventCue && !isReplayTargeted && !isCorpse) {
                     continue;
                 }
             } else if (!showNameplates_) {
@@ -1131,6 +1134,11 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         if (offlineReplay && isCorpse) {
             borderColor = IM_COL32(165, 165, 165, A(230));
+        }
+        if (hasReplayEventCue) {
+            borderColor = replayEventCue == "death"
+                ? IM_COL32(210, 210, 210, A(245))
+                : IM_COL32(255, 230, 70, A(245));
         }
         if (isReplayTargeted) {
             borderColor = IM_COL32(120, 240, 255, A(230));
@@ -1506,6 +1514,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
         }
+        if (hasReplayEventCue) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += replayEventCue;
+        }
         if (offlineReplay && isCorpse) {
             if (!subLabel.empty()) subLabel += "  ";
             subLabel += "dead";
@@ -1561,8 +1573,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (!subLabel.empty()) {
             float subX = sx - subSize.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
+            ImU32 subColor = IM_COL32(180, 180, 180, A(200));
+            if (hasReplayEventCue) {
+                subColor = replayEventCue == "death"
+                    ? IM_COL32(230, 230, 230, A(235))
+                    : IM_COL32(255, 230, 70, A(235));
+            }
             drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
-            drawList->AddText(ImVec2(subX,         subY),         IM_COL32(180, 180, 180, A(200)), subLabel.c_str());
+            drawList->AddText(ImVec2(subX,         subY),         subColor, subLabel.c_str());
         }
 
         // Group leader crown to the right of the name on player nameplates
