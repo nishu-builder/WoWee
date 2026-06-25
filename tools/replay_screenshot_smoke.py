@@ -14,6 +14,7 @@ import os
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import zlib
 from pathlib import Path
@@ -636,70 +637,76 @@ def main() -> int:
 
     command = [str(wowee), "--replay", str(replay)]
     print("running:", " ".join(command))
-    process = subprocess.Popen(
-        command,
-        cwd=wowee.parent,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stdout_file, \
+            tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=wowee.parent,
+            env=env,
+            text=True,
+            stdout=stdout_file,
+            stderr=stderr_file,
+        )
 
-    deadline = time.monotonic() + args.timeout
-    valid_since: float | None = None
-    timed_out = False
-    terminated_after_capture = False
-    killed_after_terminate = False
-    while True:
-        returncode = process.poll()
-        if returncode is not None:
-            break
+        deadline = time.monotonic() + args.timeout
+        valid_since: float | None = None
+        timed_out = False
+        terminated_after_capture = False
+        killed_after_terminate = False
+        while True:
+            returncode = process.poll()
+            if returncode is not None:
+                break
 
-        now = time.monotonic()
-        if valid_since is None and output.exists():
-            try:
-                validate_capture(
-                    output,
-                    args.min_width,
-                    args.min_height,
-                    args.min_unique_colors,
-                    args.expect_cue_color,
-                    args.min_cue_color_pixels,
-                    quiet=True,
-                )
-            except PngError:
-                pass
-            else:
-                valid_since = now
+            now = time.monotonic()
+            if valid_since is None and output.exists():
+                try:
+                    validate_capture(
+                        output,
+                        args.min_width,
+                        args.min_height,
+                        args.min_unique_colors,
+                        args.expect_cue_color,
+                        args.min_cue_color_pixels,
+                        quiet=True,
+                    )
+                except PngError:
+                    pass
+                else:
+                    valid_since = now
 
-        if valid_since is not None and now - valid_since >= args.post_capture_exit_timeout:
-            process.terminate()
-            terminated_after_capture = True
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
+            if valid_since is not None and now - valid_since >= args.post_capture_exit_timeout:
+                process.terminate()
+                terminated_after_capture = True
+                try:
+                    process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    killed_after_terminate = True
+                break
+
+            if now >= deadline:
                 process.kill()
-                killed_after_terminate = True
-            break
+                timed_out = True
+                break
 
-        if now >= deadline:
-            process.kill()
-            timed_out = True
-            break
+            sleep_for = min(0.25, max(0.0, deadline - now))
+            if valid_since is not None:
+                sleep_for = min(
+                    sleep_for,
+                    max(0.0, args.post_capture_exit_timeout - (now - valid_since)),
+                )
+            time.sleep(sleep_for)
 
-        sleep_for = min(0.25, max(0.0, deadline - now))
-        if valid_since is not None:
-            sleep_for = min(
-                sleep_for,
-                max(0.0, args.post_capture_exit_timeout - (now - valid_since)),
-            )
-        time.sleep(sleep_for)
-
-    stdout, stderr = process.communicate()
-    if stdout:
-        print(stdout, end="")
-    if stderr:
-        print(stderr, end="", file=sys.stderr)
+        process.wait()
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read()
+        stderr = stderr_file.read()
+        if stdout:
+            print(stdout, end="")
+        if stderr:
+            print(stderr, end="", file=sys.stderr)
 
     if timed_out:
         try:
