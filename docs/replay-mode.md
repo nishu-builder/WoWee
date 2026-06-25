@@ -206,6 +206,8 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Can lock the observer camera to a recorded player from the replay overlay,
   `F`/`Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
   deterministic inspection captures.
+- Uses an angled, zoomed-out follow camera behind the focused player's recorded
+  facing direction, rather than a straight-down tactical view.
 - Can start at the first target-or-combat snapshot with
   `WOWEE_REPLAY_START_EVENT=1`, which is useful for automated screenshot smokes
   that should land on action without hardcoding a timestamp.
@@ -311,7 +313,9 @@ when it is present in the sampled frame. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
-or widen the follow camera for detail-oriented screenshot smokes.
+or widen the follow camera for detail-oriented screenshot smokes. Use
+`WOWEE_REPLAY_FOLLOW_STEEP_PITCH` and `WOWEE_REPLAY_FOLLOW_SHALLOW_PITCH` to
+bound the derived look-at pitch in degrees.
 
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.
@@ -370,7 +374,25 @@ python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
 
 Use `--ms <server-ms>[,<server-ms>...]` for deterministic contact-sheet captures
 inside a known movement interval. Explicit `--ms` captures skip event preflight
-and cannot be combined with `--event`.
+and cannot be combined with `--event`. Explicit timestamp captures follow the
+first recorded player by default; pass `--no-follow` to keep the high observer
+camera, or use `--follow-distance` / `--follow-height` to tune the angled view.
+
+Use `--timeline-samples <n>` to capture `n` evenly spaced server-ms frames across
+the active replay map. This is useful for checking ordinary movement, camera
+framing, terrain alignment, and label density across a longer recording instead
+of only around a combat/death event:
+
+```bash
+python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --wowee ./build/bin/wowee \
+  --timeline-samples 6 \
+  --output build/bin/wowee_replay_timeline_sheet.png
+```
+
+The same follow-camera flags are accepted by
+`tools/replay_screenshot_smoke.py` for single-frame captures.
 
 Use `--validate-only --output <png>` to re-check an existing screenshot without
 launching WoWee.

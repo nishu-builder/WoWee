@@ -9,6 +9,7 @@ still produced and validated through WoWee's real replay screenshot hook.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import subprocess
 import sys
@@ -121,6 +122,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Comma-separated explicit server ms values to capture instead of event offsets.",
     )
+    parser.add_argument(
+        "--timeline-samples",
+        type=int,
+        default=None,
+        help="Capture this many evenly spaced samples across the active replay map timeline.",
+    )
     parser.add_argument("--output", type=Path, required=True, help="Contact sheet PNG path.")
     parser.add_argument("--frames-dir", type=Path, default=None, help="Directory for per-frame PNGs.")
     parser.add_argument("--columns", type=int, default=3)
@@ -128,6 +135,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frames", type=int, default=90)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--keep-overlay", action="store_true", help="Keep replay overlay/minimap chrome visible.")
+    parser.add_argument("--no-follow", action="store_true", help="Do not enable replay follow camera.")
+    parser.add_argument("--follow-distance", type=float, default=None, help="Replay follow camera distance.")
+    parser.add_argument("--follow-height", type=float, default=None, help="Replay follow camera height.")
+    parser.add_argument("--follow-steep-pitch", type=float, default=None, help="Steepest replay follow pitch in degrees.")
+    parser.add_argument("--follow-shallow-pitch", type=float, default=None, help="Shallowest replay follow pitch in degrees.")
     return parser.parse_args()
 
 
@@ -246,8 +258,71 @@ def ms_frame_name(ms: float) -> str:
     return f"ms_{format_ms(ms)}.png"
 
 
+def timeline_frame_name(index: int, ms: float) -> str:
+    return f"timeline_{index:02d}_ms_{format_ms(ms)}.png"
+
+
 def format_capture_label(event: str, offset_ms: float, active_map: int, capture_ms: float) -> str:
     return f"{event} {format_offset(offset_ms)} M{active_map} MS{format_ms(capture_ms)}"
+
+
+def append_camera_args(command: list[str], args: argparse.Namespace) -> None:
+    if args.no_follow:
+        command.append("--no-follow")
+    if args.follow_distance is not None:
+        command.extend(["--follow-distance", str(args.follow_distance)])
+    if args.follow_height is not None:
+        command.extend(["--follow-height", str(args.follow_height)])
+    if args.follow_steep_pitch is not None:
+        command.extend(["--follow-steep-pitch", str(args.follow_steep_pitch)])
+    if args.follow_shallow_pitch is not None:
+        command.extend(["--follow-shallow-pitch", str(args.follow_shallow_pitch)])
+
+
+def active_map_timeline(path: Path, samples: int) -> tuple[int, list[float]]:
+    if samples <= 0:
+        raise smoke.ReplayError("--timeline-samples must be positive")
+
+    active_map: int | None = None
+    first_ms: int | None = None
+    last_ms: int | None = None
+
+    with path.open("r", encoding="utf-8") as file:
+        for line_number, line in enumerate(file, start=1):
+            if not line.strip():
+                continue
+            try:
+                snapshot = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise smoke.ReplayError(f"JSON parse error at line {line_number}: {exc}") from exc
+            if not isinstance(snapshot, dict):
+                raise smoke.ReplayError(f"line {line_number} is not a JSON object")
+
+            players = snapshot.get("players")
+            if not isinstance(players, list) or not players:
+                continue
+
+            snapshot_map = int(snapshot.get("map", 0) or 0)
+            if active_map is None:
+                active_map = snapshot_map
+            if snapshot_map != active_map:
+                continue
+
+            snapshot_ms = int(snapshot.get("ms", snapshot.get("t", 0)) or 0)
+            if first_ms is None:
+                first_ms = snapshot_ms
+            last_ms = snapshot_ms
+
+    if active_map is None or first_ms is None or last_ms is None:
+        raise smoke.ReplayError("replay contains no player snapshots")
+    if samples == 1 or first_ms == last_ms:
+        return active_map, [float(first_ms)]
+
+    span = float(last_ms - first_ms)
+    return active_map, [
+        float(first_ms) + span * (index / float(samples - 1))
+        for index in range(samples)
+    ]
 
 
 def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Path) -> None:
@@ -273,6 +348,7 @@ def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Pa
     ]
     if args.keep_overlay:
         command.append("--no-clean-capture")
+    append_camera_args(command, args)
 
     print("running:", " ".join(command), flush=True)
     subprocess.run(command, check=True)
@@ -299,6 +375,7 @@ def run_ms_smoke(args: argparse.Namespace, ms: float, output: Path) -> None:
     ]
     if args.keep_overlay:
         command.append("--no-clean-capture")
+    append_camera_args(command, args)
 
     print("running:", " ".join(command), flush=True)
     subprocess.run(command, check=True)
@@ -338,8 +415,13 @@ def assemble_sheet(frames: list[tuple[str, Path]], output: Path, columns: int, t
 
 def main() -> int:
     args = parse_args()
-    if args.ms is not None and args.event:
-        print("error: --ms cannot be combined with --event", file=sys.stderr)
+    explicit_modes = sum(
+        1
+        for enabled in (args.ms is not None, bool(args.event), args.timeline_samples is not None)
+        if enabled
+    )
+    if explicit_modes > 1:
+        print("error: choose only one of --event, --ms, or --timeline-samples", file=sys.stderr)
         return 2
 
     events = args.event or ["damage"]
@@ -352,6 +434,20 @@ def main() -> int:
             output = frames_dir / ms_frame_name(ms)
             run_ms_smoke(args, ms, output)
             frames.append((f"MS{format_ms(ms)}", output))
+        assemble_sheet(frames, args.output, args.columns, args.thumb_width)
+        print(f"OK: wrote replay contact sheet {args.output}")
+        return 0
+
+    if args.timeline_samples is not None:
+        try:
+            active_map, timeline = active_map_timeline(args.replay, args.timeline_samples)
+        except smoke.ReplayError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        for index, ms in enumerate(timeline, start=1):
+            output = frames_dir / timeline_frame_name(index, ms)
+            run_ms_smoke(args, ms, output)
+            frames.append((f"T{index} M{active_map} MS{format_ms(ms)}", output))
         assemble_sheet(frames, args.output, args.columns, args.thumb_width)
         print(f"OK: wrote replay contact sheet {args.output}")
         return 0

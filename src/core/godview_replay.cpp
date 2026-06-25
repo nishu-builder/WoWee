@@ -1204,6 +1204,8 @@ std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget
     target.renderPosition = toRenderPosition(selected->player.x,
                                              selected->player.y,
                                              selected->player.z);
+    target.renderYawRad =
+        coords::serverToCanonicalYaw(selected->player.orientation) + coords::PI * 0.5f;
 
     auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
     const auto eventTargetGuid = activeFocusedEventTargetGuid(players, creatures);

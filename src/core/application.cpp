@@ -2397,9 +2397,14 @@ void Application::applyReplayCameraFollow(float deltaTime) {
     }
 
     glm::vec3 pivot = focus->renderPosition + glm::vec3(0.0f, 0.0f, 2.0f);
-    glm::vec2 viewBack(0.0f, -1.0f);
-    const float baseBackDistance = envFloatValue("WOWEE_REPLAY_FOLLOW_DISTANCE", 38.0f, 8.0f, 300.0f);
-    const float baseHeight = envFloatValue("WOWEE_REPLAY_FOLLOW_HEIGHT", 48.0f, 6.0f, 240.0f);
+    glm::vec2 viewBack(-std::cos(focus->renderYawRad), -std::sin(focus->renderYawRad));
+    if (!std::isfinite(viewBack.x) || !std::isfinite(viewBack.y) || glm::length(viewBack) < 0.001f) {
+        viewBack = glm::vec2(0.0f, -1.0f);
+    } else {
+        viewBack = glm::normalize(viewBack);
+    }
+    const float baseBackDistance = envFloatValue("WOWEE_REPLAY_FOLLOW_DISTANCE", 150.0f, 8.0f, 300.0f);
+    const float baseHeight = envFloatValue("WOWEE_REPLAY_FOLLOW_HEIGHT", 160.0f, 6.0f, 240.0f);
     float backDistance = baseBackDistance;
     float height = baseHeight;
     uint64_t targetGuid = 0;
@@ -2412,18 +2417,11 @@ void Application::applyReplayCameraFollow(float deltaTime) {
         pivot = (pivot + targetPivot) * 0.5f;
         backDistance = std::clamp(baseBackDistance + span * 0.55f,
                                   baseBackDistance,
-                                  std::max(baseBackDistance, 120.0f));
+                                  baseBackDistance + 80.0f);
         height = std::clamp(baseHeight + span * 0.35f,
                             baseHeight,
-                            std::max(baseHeight, 96.0f));
+                            baseHeight + 80.0f);
 
-        if (span > 1.0f) {
-            glm::vec2 pairDir = relation / span;
-            viewBack = glm::normalize(glm::vec2(-pairDir.y, pairDir.x));
-            if (glm::dot(viewBack, glm::vec2(0.0f, -1.0f)) < 0.0f) {
-                viewBack = -viewBack;
-            }
-        }
     }
 
     glm::vec3 desired = pivot + glm::vec3(viewBack.x * backDistance,
@@ -2449,7 +2447,14 @@ void Application::applyReplayCameraFollow(float deltaTime) {
     glm::vec3 forward = pivot - *replayCameraFollowPosition_;
     float horizontal = std::max(1.0f, glm::length(glm::vec2(forward.x, forward.y)));
     float yawDeg = glm::degrees(std::atan2(forward.y, forward.x));
-    float pitchDeg = glm::clamp(glm::degrees(std::atan2(forward.z, horizontal)), -82.0f, -35.0f);
+    float steepPitch = envFloatValue("WOWEE_REPLAY_FOLLOW_STEEP_PITCH", -72.0f, -89.0f, -15.0f);
+    float shallowPitch = envFloatValue("WOWEE_REPLAY_FOLLOW_SHALLOW_PITCH", -28.0f, -89.0f, -15.0f);
+    if (steepPitch > shallowPitch) {
+        std::swap(steepPitch, shallowPitch);
+    }
+    float pitchDeg = glm::clamp(glm::degrees(std::atan2(forward.z, horizontal)),
+                                steepPitch,
+                                shallowPitch);
 
     if (auto* cc = renderer->getCameraController()) {
         cc->setFreeCameraPose(*replayCameraFollowPosition_, yawDeg, pitchDeg);

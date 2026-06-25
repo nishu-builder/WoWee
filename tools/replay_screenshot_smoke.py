@@ -309,6 +309,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=None, help="Screenshot path to write.")
     parser.add_argument("--event", default="death", help="WOWEE_REPLAY_SCREENSHOT_EVENT value.")
     parser.add_argument("--focus", default=None, help="WOWEE_REPLAY_FOCUS_PLAYER value.")
+    parser.add_argument("--no-follow", action="store_true", help="Do not enable replay follow camera.")
+    parser.add_argument("--follow-distance", type=float, default=None, help="Replay follow camera distance.")
+    parser.add_argument("--follow-height", type=float, default=None, help="Replay follow camera height.")
+    parser.add_argument("--follow-steep-pitch", type=float, default=None, help="Steepest replay follow pitch in degrees.")
+    parser.add_argument("--follow-shallow-pitch", type=float, default=None, help="Shallowest replay follow pitch in degrees.")
     parser.add_argument("--ms", type=float, default=None, help="Explicit WOWEE_REPLAY_SCREENSHOT_MS value.")
     parser.add_argument(
         "--event-offset-ms",
@@ -392,23 +397,50 @@ def main() -> int:
         env["WOWEE_REPLAY_SCREENSHOT_EVENT"] = event
         if args.event_offset_ms is not None:
             env["WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS"] = str(args.event_offset_ms)
-    focus = args.focus if args.focus is not None else (args.event if args.ms is None else None)
+    focus = None
+    if not args.no_follow:
+        focus = args.focus if args.focus is not None else (event if args.ms is None else "first")
     if focus:
         env["WOWEE_REPLAY_FOCUS_PLAYER"] = focus
+    if args.follow_distance is not None:
+        env["WOWEE_REPLAY_FOLLOW_DISTANCE"] = str(args.follow_distance)
+    if args.follow_height is not None:
+        env["WOWEE_REPLAY_FOLLOW_HEIGHT"] = str(args.follow_height)
+    if args.follow_steep_pitch is not None:
+        env["WOWEE_REPLAY_FOLLOW_STEEP_PITCH"] = str(args.follow_steep_pitch)
+    if args.follow_shallow_pitch is not None:
+        env["WOWEE_REPLAY_FOLLOW_SHALLOW_PITCH"] = str(args.follow_shallow_pitch)
     if not args.no_clean_capture:
         env["WOWEE_REPLAY_CLEAN_CAPTURE"] = "1"
 
     command = [str(wowee), "--replay", str(replay)]
     print("running:", " ".join(command))
-    result = subprocess.run(
-        command,
-        cwd=wowee.parent,
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=args.timeout,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=wowee.parent,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=args.timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        if exc.stdout:
+            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+            print(stdout, end="")
+        if exc.stderr:
+            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+            print(stderr, end="", file=sys.stderr)
+        try:
+            validate_png(output, args.min_width, args.min_height, args.min_unique_colors)
+        except PngError as png_exc:
+            print(f"error: WoWee timed out after {args.timeout:g}s and no valid screenshot was available: {png_exc}",
+                  file=sys.stderr)
+            return 124
+        print(f"warning: WoWee timed out after {args.timeout:g}s after writing a valid screenshot; accepting capture",
+              file=sys.stderr)
+        return 0
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
