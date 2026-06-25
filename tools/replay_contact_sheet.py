@@ -134,6 +134,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--thumb-width", type=int, default=426)
     parser.add_argument("--frames", type=int, default=90)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--min-frame-delta",
+        type=float,
+        default=0.0,
+        help=(
+            "Require this minimum average RGB byte difference between each "
+            "adjacent pair of captured thumbnails; useful for catching stale "
+            "multi-frame captures. Disabled by default."
+        ),
+    )
     parser.add_argument("--keep-overlay", action="store_true", help="Keep replay overlay/minimap chrome visible.")
     parser.add_argument("--no-follow", action="store_true", help="Do not enable replay follow camera.")
     parser.add_argument("--follow-distance", type=float, default=None, help="Replay follow camera distance.")
@@ -247,6 +257,33 @@ def draw_text(
                     continue
                 fill_rect(pixels, width, cursor + gx * scale, y0 + gy * scale, scale, scale, color)
         cursor += (3 + 1) * scale
+
+
+def average_rgb_delta(
+    a_width: int,
+    a_height: int,
+    a_pixels: bytes,
+    b_width: int,
+    b_height: int,
+    b_pixels: bytes,
+) -> float:
+    width = min(a_width, b_width)
+    height = min(a_height, b_height)
+    if width <= 0 or height <= 0:
+        return 0.0
+
+    total = 0
+    channels = width * height * 3
+    for y in range(height):
+        a_row = y * a_width * 4
+        b_row = y * b_width * 4
+        for x in range(width):
+            ai = a_row + x * 4
+            bi = b_row + x * 4
+            total += abs(a_pixels[ai] - b_pixels[bi])
+            total += abs(a_pixels[ai + 1] - b_pixels[bi + 1])
+            total += abs(a_pixels[ai + 2] - b_pixels[bi + 2])
+    return total / float(channels)
 
 
 def frame_name(event: str, offset_ms: float) -> str:
@@ -381,7 +418,35 @@ def run_ms_smoke(args: argparse.Namespace, ms: float, output: Path) -> None:
     subprocess.run(command, check=True)
 
 
-def assemble_sheet(frames: list[tuple[str, Path]], output: Path, columns: int, thumb_width: int) -> None:
+def validate_frame_deltas(
+    thumbnails: list[tuple[str, int, int, bytes]],
+    min_frame_delta: float,
+) -> None:
+    if min_frame_delta <= 0.0 or len(thumbnails) < 2:
+        return
+
+    for index in range(1, len(thumbnails)):
+        prev_label, prev_width, prev_height, prev_pixels = thumbnails[index - 1]
+        label, width, height, pixels = thumbnails[index]
+        delta = average_rgb_delta(prev_width, prev_height, prev_pixels, width, height, pixels)
+        if delta < min_frame_delta:
+            raise smoke.PngError(
+                f"adjacent frames look stale: {prev_label!r} -> {label!r} "
+                f"average RGB delta {delta:.3f} < {min_frame_delta:.3f}"
+            )
+        print(
+            f"OK: frame delta {prev_label!r} -> {label!r} "
+            f"average RGB delta {delta:.3f} >= {min_frame_delta:.3f}"
+        )
+
+
+def assemble_sheet(
+    frames: list[tuple[str, Path]],
+    output: Path,
+    columns: int,
+    thumb_width: int,
+    min_frame_delta: float,
+) -> None:
     if columns <= 0:
         raise ValueError("--columns must be positive")
     thumbnails: list[tuple[str, int, int, bytes]] = []
@@ -389,6 +454,7 @@ def assemble_sheet(frames: list[tuple[str, Path]], output: Path, columns: int, t
         width, height, pixels = read_rgba(path)
         thumb_w, thumb_h, thumb_pixels = resize_rgba_nearest(width, height, pixels, thumb_width)
         thumbnails.append((label, thumb_w, thumb_h, thumb_pixels))
+    validate_frame_deltas(thumbnails, min_frame_delta)
 
     label_height = 24
     padding = 10
@@ -434,7 +500,7 @@ def main() -> int:
             output = frames_dir / ms_frame_name(ms)
             run_ms_smoke(args, ms, output)
             frames.append((f"MS{format_ms(ms)}", output))
-        assemble_sheet(frames, args.output, args.columns, args.thumb_width)
+        assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
         print(f"OK: wrote replay contact sheet {args.output}")
         return 0
 
@@ -448,7 +514,7 @@ def main() -> int:
             output = frames_dir / timeline_frame_name(index, ms)
             run_ms_smoke(args, ms, output)
             frames.append((f"T{index} M{active_map} MS{format_ms(ms)}", output))
-        assemble_sheet(frames, args.output, args.columns, args.thumb_width)
+        assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
         print(f"OK: wrote replay contact sheet {args.output}")
         return 0
 
@@ -468,7 +534,7 @@ def main() -> int:
             label = format_capture_label(normalized_event, offset_ms, active_map, event_ms + offset_ms)
             frames.append((label, output))
 
-    assemble_sheet(frames, args.output, args.columns, args.thumb_width)
+    assemble_sheet(frames, args.output, args.columns, args.thumb_width, args.min_frame_delta)
     print(f"OK: wrote replay contact sheet {args.output}")
     return 0
 

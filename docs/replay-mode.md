@@ -373,8 +373,15 @@ python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
   --event damage \
   --event death \
   --offset-ms 0,500,3000 \
+  --min-frame-delta 0.1 \
   --output build/bin/wowee_replay_contact_sheet.png
 ```
+
+`--min-frame-delta <rgb-bytes>` optionally fails the contact-sheet run when any
+adjacent captured thumbnails are too visually similar. This catches stale
+multi-frame captures where every individual PNG is valid and nonblank, but the
+sheet does not actually prove motion or event progression. Leave it unset for
+static comparison sheets.
 
 Use `--ms <server-ms>[,<server-ms>...]` for deterministic contact-sheet captures
 inside a known movement interval. Explicit `--ms` captures skip event preflight
