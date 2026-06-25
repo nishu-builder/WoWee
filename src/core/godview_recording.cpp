@@ -135,6 +135,18 @@ std::string readString(const Json& object, const char* key, const std::string& f
     return fallback;
 }
 
+std::optional<uint32_t> readOptionalU32(const Json& object, const char* key) {
+    auto it = object.find(key);
+    if (it == object.end() || it->is_null()) return std::nullopt;
+    return readU32(object, key);
+}
+
+std::optional<bool> readOptionalBool(const Json& object, const char* key) {
+    auto it = object.find(key);
+    if (it == object.end() || it->is_null()) return std::nullopt;
+    return readBool(object, key);
+}
+
 uint64_t readEntityGuid(const Json& object) {
     auto rawIt = object.find("raw_guid");
     if (rawIt != object.end()) {
@@ -150,6 +162,12 @@ std::string readEntityGuidString(const Json& object, uint64_t guid) {
     auto rawIt = object.find("raw_guid");
     if (rawIt != object.end()) return readString(object, "raw_guid", std::to_string(guid));
     return readString(object, "guid", std::to_string(guid));
+}
+
+std::string readGuidString(const Json& object, const char* rawKey, const char* lowKey, uint64_t guid) {
+    auto rawIt = object.find(rawKey);
+    if (rawIt != object.end()) return readString(object, rawKey, std::to_string(guid));
+    return readString(object, lowKey, std::to_string(guid));
 }
 
 std::optional<uint64_t> readOptionalGuid(const Json& object, const char* rawKey, const char* lowKey) {
@@ -179,6 +197,39 @@ float lerpAngle(float a, float b, float t) {
 
 bool hasReplayEvent(const GodviewRecording::Snapshot& snapshot,
                     GodviewRecording::EventKind kind) {
+    auto explicitEventMatches = [kind](const GodviewRecording::ReplayEvent& event) {
+        if (kind == GodviewRecording::EventKind::Death) {
+            return event.kind == "death";
+        }
+        if (kind == GodviewRecording::EventKind::Combat) {
+            return event.kind == "combat" || event.kind == "damage";
+        }
+        if (kind == GodviewRecording::EventKind::Damage) {
+            return event.kind == "damage";
+        }
+        if (kind == GodviewRecording::EventKind::Target) {
+            return event.kind == "target";
+        }
+        return event.kind == "target" || event.kind == "combat" ||
+               event.kind == "damage" || event.kind == "death";
+    };
+    if (std::any_of(snapshot.events.begin(), snapshot.events.end(), explicitEventMatches)) {
+        return true;
+    }
+
+    if (kind == GodviewRecording::EventKind::Death) {
+        if (std::any_of(snapshot.players.begin(), snapshot.players.end(),
+                        [](const auto& player) { return player.hp == 0; })) {
+            return true;
+        }
+        return std::any_of(snapshot.creatures.begin(), snapshot.creatures.end(),
+                           [](const auto& creature) { return creature.dead || creature.hp == 0; });
+    }
+
+    if (kind == GodviewRecording::EventKind::Damage) {
+        return false;
+    }
+
     for (const auto& player : snapshot.players) {
         if (kind != GodviewRecording::EventKind::Target && player.combat) return true;
         if (kind != GodviewRecording::EventKind::Combat && player.targetGuid) return true;
@@ -312,6 +363,31 @@ bool GodviewRecording::load(const std::string& path, std::string& error) {
 
                 snapshot.creatureByGuid[creature.guid] = snapshot.creatures.size();
                 snapshot.creatures.push_back(std::move(creature));
+            }
+        }
+
+        auto eventsIt = doc.find("events");
+        if (eventsIt != doc.end() && eventsIt->is_array()) {
+            for (const auto& eventDoc : *eventsIt) {
+                if (!eventDoc.is_object()) continue;
+
+                ReplayEvent event;
+                event.kind = readString(eventDoc, "kind");
+                if (event.kind.empty()) continue;
+                if (auto sourceGuid = readOptionalGuid(eventDoc, "source_raw", "source")) {
+                    event.sourceGuid = *sourceGuid;
+                    event.sourceRawGuid = readGuidString(eventDoc, "source_raw", "source", event.sourceGuid);
+                }
+                if (auto targetGuid = readOptionalGuid(eventDoc, "target_raw", "target")) {
+                    event.targetGuid = *targetGuid;
+                    event.targetRawGuid = readGuidString(eventDoc, "target_raw", "target", event.targetGuid);
+                }
+                event.amount = readU32(eventDoc, "amount");
+                event.overkill = readOptionalU32(eventDoc, "overkill");
+                event.school = readOptionalU32(eventDoc, "school");
+                event.spellId = readOptionalU32(eventDoc, "spell_id");
+                event.critical = readOptionalBool(eventDoc, "critical");
+                snapshot.events.push_back(std::move(event));
             }
         }
 

@@ -16,6 +16,8 @@ public:
         TargetOrCombat,
         Target,
         Combat,
+        Damage,
+        Death,
     };
 
     struct Equipment {
@@ -70,6 +72,19 @@ public:
         bool dead = false;
     };
 
+    struct ReplayEvent {
+        std::string kind;
+        uint64_t sourceGuid = 0;
+        std::string sourceRawGuid;
+        uint64_t targetGuid = 0;
+        std::string targetRawGuid;
+        uint32_t amount = 0;
+        std::optional<uint32_t> overkill;
+        std::optional<uint32_t> school;
+        std::optional<uint32_t> spellId;
+        std::optional<bool> critical;
+    };
+
     struct Snapshot {
         uint64_t t = 0;
         uint32_t schema = 1;
@@ -78,6 +93,7 @@ public:
         uint32_t instance = 0;
         std::vector<Player> players;
         std::vector<Creature> creatures;
+        std::vector<ReplayEvent> events;
         std::unordered_map<uint64_t, size_t> playerByGuid;
         std::unordered_map<uint64_t, size_t> creatureByGuid;
     };

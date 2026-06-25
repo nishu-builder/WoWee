@@ -1,4 +1,5 @@
 #include "core/godview_recording.hpp"
+#include "core/coordinates.hpp"
 
 #include <catch_amalgamated.hpp>
 
@@ -28,7 +29,7 @@ std::filesystem::path writeContractRecording() {
         R"JSON({"t":1700000002000,"ms":2000,"map":0,"instance":0,"players":[{"guid":50,"name":"Alpha","level":11,"race":1,"class":1,"gender":1,"x":20.0,"y":10.0,"z":5.0,"o":1.5707964,"hp":50,"maxhp":100,"target":0,"combat":true}]}
 {"t":1700000001000,"ms":1000,"map":0,"instance":0,"players":[{"guid":50,"name":"Alpha","level":10,"race":1,"class":1,"x":10.0,"y":0.0,"z":0.0,"o":0.0,"hp":100,"maxhp":100,"target":"0x33","combat":false}]}
 {"t":1700000001000,"ms":1000,"map":1,"instance":0,"players":[{"guid":"cow:1","name":"Othermap","level":8,"race":2,"class":7,"gender":1,"x":100.0,"y":200.0,"z":30.0,"o":3.0,"hp":80,"maxhp":80,"target":0,"combat":false}]}
-{"t":1700000002000,"ms":2000,"map":1,"instance":0,"players":[{"guid":"cow:1","name":"Othermap","level":8,"race":2,"class":7,"gender":1,"x":110.0,"y":210.0,"z":30.0,"o":3.4,"hp":80,"maxhp":80,"target":0,"combat":false}]}
+{"t":1700000002000,"ms":2000,"map":1,"instance":0,"players":[{"guid":"cow:1","name":"Othermap","level":8,"race":2,"class":7,"gender":1,"x":110.0,"y":210.0,"z":30.0,"o":3.4,"hp":80,"maxhp":80,"target":0,"combat":false}],"creatures":[{"guid":900,"entry":2955,"name":"Dead Plainstrider","level":6,"x":111.0,"y":211.0,"z":30.0,"o":0.0,"hp":0,"maxhp":60,"target":0,"combat":false,"dead":true}]}
 )JSON");
 }
 
@@ -103,6 +104,56 @@ TEST_CASE("GodviewRecording interpolates only within the selected map", "[godvie
     REQUIRE(recording.snapshots()[pair.next].map == 1);
 }
 
+TEST_CASE("GodviewRecording VMaNGOS coordinates map directly to render space", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_coordinate_alignment",
+        R"JSON({"t":1700000000000,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"name":"Replayhunt","level":4,"race":2,"class":7,"x":-620.25,"y":-4252.75,"z":40.5,"o":6.20,"hp":80,"maxhp":100,"target":0,"combat":false}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto players = recording.samplePlayers(1000.0, 1);
+    REQUIRE(players.size() == 1);
+
+    const auto& player = players.front().player;
+    glm::vec3 serverPos(player.x, player.y, player.z);
+    glm::vec3 renderPos = wowee::core::coords::canonicalToRender(
+        wowee::core::coords::serverToCanonical(serverPos));
+    REQUIRE(renderPos.x == Catch::Approx(player.x));
+    REQUIRE(renderPos.y == Catch::Approx(player.y));
+    REQUIRE(renderPos.z == Catch::Approx(player.z));
+
+    const float renderYaw = wowee::core::coords::normalizeAngleRad(
+        wowee::core::coords::serverToCanonicalYaw(player.orientation) +
+        wowee::core::coords::PI * 0.5f);
+    REQUIRE(renderYaw == Catch::Approx(
+        wowee::core::coords::normalizeAngleRad(player.orientation)));
+}
+
+TEST_CASE("GodviewRecording interpolates wrapped orientations by the shortest turn", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_orientation_wrap",
+        R"JSON({"t":1700000000000,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":6.20,"hp":80,"maxhp":100,"target":0,"combat":false}],"creatures":[{"guid":2955,"entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":0.05,"hp":60,"maxhp":60,"target":0,"combat":false,"dead":false}]}
+{"t":1700000000500,"ms":2000,"map":1,"instance":0,"players":[{"guid":50,"name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":0.08,"hp":80,"maxhp":100,"target":0,"combat":false}],"creatures":[{"guid":2955,"entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":6.15,"hp":60,"maxhp":60,"target":0,"combat":false,"dead":false}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto players = recording.samplePlayers(1500.0, 1);
+    REQUIRE(players.size() == 1);
+    REQUIRE(std::abs(players.front().player.orientation) < 0.01f);
+
+    auto creatures = recording.sampleCreatures(1500.0, 1);
+    REQUIRE(creatures.size() == 1);
+    REQUIRE(std::abs(creatures.front().creature.orientation) < 0.06f);
+}
+
 TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[godview][recording]") {
     auto path = writeContractRecording();
 
@@ -130,6 +181,14 @@ TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[g
     auto prevTargetMap0 = recording.findEventMs(2000.0, 0, GodviewRecording::EventKind::Target, -1);
     REQUIRE(prevTargetMap0);
     REQUIRE(*prevTargetMap0 == 1000);
+
+    auto firstDeathMap1 = recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Death, 1);
+    REQUIRE(firstDeathMap1);
+    REQUIRE(*firstDeathMap1 == 2000);
+    REQUIRE_FALSE(recording.findEventMs(999.0, 0, GodviewRecording::EventKind::Death, 1));
+    auto prevDeathMap1 = recording.findEventMs(2500.0, 1, GodviewRecording::EventKind::Death, -1);
+    REQUIRE(prevDeathMap1);
+    REQUIRE(*prevDeathMap1 == 2000);
 
     auto prevMap0 = recording.findTargetOrCombatEventMs(2000.0, 0, -1);
     REQUIRE(prevMap0);
@@ -177,6 +236,61 @@ TEST_CASE("GodviewRecording loads v2 raw GUID equipment and creatures", "[godvie
     REQUIRE(creatures[0].creature.hp == 48);
     REQUIRE(creatures[0].creature.combat == true);
     REQUIRE(creatures[0].moving == true);
+}
+
+TEST_CASE("GodviewRecording loads v3 replay events", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_v3_events",
+        R"JSON({"t":1700000000000,"schema":3,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"gender":1,"display_id":51,"native_display_id":51,"mount_display_id":0,"x":-620.0,"y":-4252.0,"z":40.0,"o":1.0,"hp":80,"maxhp":100,"target":2955,"target_raw":"0x20000000b8b","combat":true}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"rank":0,"type":1,"display_id":390,"native_display_id":390,"x":-625.0,"y":-4250.0,"z":40.0,"o":2.0,"hp":47,"maxhp":60,"target":50,"target_raw":"0x10000000032","combat":true,"dead":false}],"events":[{"kind":"damage","source":50,"source_raw":"0x10000000032","target":2955,"target_raw":"0x20000000b8b","amount":13,"school":1,"spell_id":6603,"critical":false}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    REQUIRE(recording.snapshots().size() == 1);
+    const auto& snapshot = recording.snapshots().front();
+    REQUIRE(snapshot.schema == 3);
+    REQUIRE(snapshot.events.size() == 1);
+    const auto& event = snapshot.events.front();
+    REQUIRE(event.kind == "damage");
+    REQUIRE(event.sourceGuid == 0x10000000032ull);
+    REQUIRE(event.sourceRawGuid == "0x10000000032");
+    REQUIRE(event.targetGuid == 0x20000000b8bull);
+    REQUIRE(event.targetRawGuid == "0x20000000b8b");
+    REQUIRE(event.amount == 13);
+    REQUIRE(event.school);
+    REQUIRE(*event.school == 1);
+    REQUIRE(event.spellId);
+    REQUIRE(*event.spellId == 6603);
+    REQUIRE(event.critical);
+    REQUIRE(*event.critical == false);
+
+    auto firstDamage = recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Damage, 1);
+    REQUIRE(firstDamage);
+    REQUIRE(*firstDamage == 1000);
+    REQUIRE_FALSE(recording.findEventMs(999.0, 0, GodviewRecording::EventKind::Damage, 1));
+}
+
+TEST_CASE("GodviewRecording finds explicit v3 replay death events", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_v3_death_event",
+        R"JSON({"t":1700000000000,"schema":3,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":0.0,"hp":80,"maxhp":100,"target":0,"target_raw":0,"combat":false}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":0.0,"hp":47,"maxhp":60,"target":0,"target_raw":0,"combat":false,"dead":false}],"events":[]}
+{"t":1700000000500,"schema":3,"ms":1500,"map":1,"instance":0,"players":[{"guid":50,"raw_guid":"0x10000000032","name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":0.0,"hp":80,"maxhp":100,"target":0,"target_raw":0,"combat":false}],"creatures":[{"guid":2955,"raw_guid":"0x20000000b8b","entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":0.0,"hp":47,"maxhp":60,"target":0,"target_raw":0,"combat":false,"dead":false}],"events":[{"kind":"death","source":50,"source_raw":"0x10000000032","target":2955,"target_raw":"0x20000000b8b","amount":0}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto firstDeath = recording.findEventMs(999.0, 1, GodviewRecording::EventKind::Death, 1);
+    REQUIRE(firstDeath);
+    REQUIRE(*firstDeath == 1500);
+    auto previousDeath = recording.findEventMs(2000.0, 1, GodviewRecording::EventKind::Death, -1);
+    REQUIRE(previousDeath);
+    REQUIRE(*previousDeath == 1500);
 }
 
 TEST_CASE("GodviewRecording switches discrete avatar fields at interpolation midpoint", "[godview][recording]") {

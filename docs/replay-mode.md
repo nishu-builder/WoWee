@@ -200,47 +200,70 @@ Replay mode now uses Coworld v2 identity fields when available:
 - Uses creature display IDs to spawn nearby recorded mobs/pets as renderable
   `game::Unit` entities.
 - Uses existing WoWee nameplate/entity fields for name and level labels.
-- Starts replay in a high observer camera centered over the first snapshot's
-  recorded players and creatures, with gravity and default floor-snap disabled
-  so the camera stays in a true god-view position.
-- Can lock the observer camera to a recorded player from the replay overlay,
-  `F`/`Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
+- Starts replay in an angled, zoomed-out follow camera behind the first recorded
+  player's facing direction, like a very distant third-person view rather than
+  a straight-down tactical view.
+- Can return to a high free observer camera from the replay overlay, `F`, or
+  `WOWEE_REPLAY_FOLLOW_CAMERA=0`; the free camera stays centered near the first
+  snapshot's recorded players and creatures, with gravity and default floor-snap
+  disabled so it remains a true god-view pose.
+- Can lock the follow camera to another recorded player from the replay overlay,
+  `Tab` controls, or `WOWEE_REPLAY_FOCUS_PLAYER=first|name|guid` for
   deterministic inspection captures.
 - Can start at the first target-or-combat snapshot with
   `WOWEE_REPLAY_START_EVENT=1`, which is useful for automated screenshot smokes
   that should land on action without hardcoding a timestamp.
 - Can seek screenshot smokes to the first target-or-combat snapshot with
   `WOWEE_REPLAY_SCREENSHOT_EVENT=1`, the first target snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, or the first combat snapshot with
-  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, when no explicit screenshot timestamp
-  is set.
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=target`, the first combat snapshot with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=combat`, the first explicit damage event with
+  `WOWEE_REPLAY_SCREENSHOT_EVENT=damage`, or the first explicit/snapshot death
+  event with `WOWEE_REPLAY_SCREENSHOT_EVENT=death`, when no explicit screenshot
+  timestamp is set.
 - When the focused player has a recorded target that is also present in the
   sampled frame, the follow camera frames the player-target midpoint and backs
   out far enough to keep the engagement readable.
+- When `WOWEE_REPLAY_FOCUS_PLAYER=death` focuses the nearest player to a dead
+  creature, the follow camera treats that corpse as the event target even if the
+  player's recorded target field has already cleared.
 - Forces offline replay nameplates on for recorded players, keeps player labels
-  visible from the high observer camera, and limits default creature labels to
-  selected, combat, or target-bearing units so dense captures remain readable.
+  visible from the zoomed-out follow and observer cameras, and limits default
+  creature labels to selected, combat, or target-bearing units so dense captures
+  remain readable.
 - Adds a compact replay-only backing behind name/sub-label text so labels remain
   legible in god-view screenshots over bright terrain.
 - Marks replay nameplates with a red border and compact `combat` sublabel when
   the recording says the unit is in combat.
-- Marks replay nameplates with an orange border and a compact `target: Name`
+- Marks replay nameplates with an orange border and a compact `-> Name`
   sublabel when the recording contains a current target GUID.
 - Shows units targeted by a recorded player/creature even when they are not
-  otherwise selected, and marks them with a compact `targeted` sublabel.
+  otherwise selected, and marks them with a compact `target` sublabel.
+- Keeps replay corpse nameplates visible with a compact `dead` sublabel so kill
+  and death-event captures preserve the defeated unit context.
 - Separates close replay target/source nameplates in screen space when the two
   labels would otherwise overlap.
 - Draws a replay-only target tether with a dark silhouette, arrow head, endpoint
   reticle, and high-contrast combat color between visible target-bearing units
   and their current target so god-view captures show engagement relationships at
   a glance.
+- Briefly feeds focused `damage` / `death` event targets into that same replay
+  nameplate/tether path while the target is present around the event time, even
+  if the recorder's normal target field has cleared in a sparse sample.
 - Caps very long creature-source tethers so distant incidental target links do
   not cut across clean god-view captures.
 - Writes target low/high fields from `target_raw` when present, falling back to
   v1 `target`.
-- Uses run animation while interpolated movement is nonzero, unarmed-ready while
-  idle in combat when available, stand otherwise, and death animation when a
-  creature snapshot is marked dead.
+- Uses run animation while interpolated movement is nonzero, recorded weapon
+  equipment to pick a player combat-ready pose when idle in combat, stand
+  otherwise, and death animation when a creature snapshot is marked dead.
+- Uses schema v3 `events` records as explicit replay cues: `damage` drives short
+  replay-only attack pulses plus floating damage numbers, and `death` is
+  accepted by replay event seeking and screenshot preflight. Older v1/v2
+  recordings still infer pulses when a player
+  or creature's recorded target loses HP between adjacent authoritative
+  snapshots. If target fields have already cleared, replay mode falls back to
+  the nearest combat unit within normal combat range so sparse recorder samples
+  still show a visible swing.
 
 ## Validation
 
@@ -264,7 +287,13 @@ frames to wait before capture when no timestamp is supplied; it defaults to
 Set `WOWEE_REPLAY_SCREENSHOT_EVENT=1` to seek the replay to the first
 target-or-combat snapshot before scheduling a screenshot. Use
 `WOWEE_REPLAY_SCREENSHOT_EVENT=target` for the first target-bearing snapshot, or
-`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot.
+`WOWEE_REPLAY_SCREENSHOT_EVENT=combat` for the first actual combat snapshot,
+`WOWEE_REPLAY_SCREENSHOT_EVENT=damage` for the first explicit damage event, or
+`WOWEE_REPLAY_SCREENSHOT_EVENT=death` for the first explicit death event or
+player/creature death snapshot.
+Set `WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS` with an event capture to schedule
+the screenshot that many replay milliseconds after the event while keeping the
+event-focused camera setup.
 This is useful for recordings where the interesting action time changes between
 captures. An explicit `WOWEE_REPLAY_SCREENSHOT_MS` takes precedence when both are
 set.
@@ -274,27 +303,120 @@ Set `WOWEE_REPLAY_HIDE_OVERLAY=1` to hide only the replay control overlay. Set
 clean captures while keeping replay nameplates and target cues visible. The replay
 overlay can also be toggled interactively with `H`.
 
-Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, or a
-recorded player name/guid to start with the observer camera following that
+Set `WOWEE_REPLAY_FOCUS_PLAYER=first`, `event`, `target`, `combat`, `damage`,
+`death`, or a recorded player name/guid to start the follow camera on that
 player. `event` selects a player involved in the current target-or-combat sample;
 `target` selects a player involved in the current target-bearing sample; `combat`
-selects a player involved in the current combat sample. This is useful with
+selects a player involved in the current combat sample; `damage` selects the
+source or nearest player around the current explicit damage event and frames the
+damaged unit as the event target; `death` selects a dead player or the nearest
+player to a dead creature, and frames that dead creature as the event target
+when it is present in the sampled frame. This is useful with
 `WOWEE_REPLAY_SCREENSHOT_MS` or `WOWEE_REPLAY_SCREENSHOT_EVENT` when comparing
 captures across replay changes.
+Set `WOWEE_REPLAY_FOLLOW_CAMERA=0` to keep the high free observer camera instead
+of the default zoomed-out follow camera.
 Use `WOWEE_REPLAY_FOLLOW_DISTANCE` and `WOWEE_REPLAY_FOLLOW_HEIGHT` to tighten
-or widen the follow camera for detail-oriented screenshot smokes.
+or widen the follow camera for detail-oriented screenshot smokes. Use
+`WOWEE_REPLAY_FOLLOW_STEEP_PITCH` and `WOWEE_REPLAY_FOLLOW_SHALLOW_PITCH` to
+bound the derived look-at pitch in degrees.
 
 The replay screenshot hook records from the active Vulkan frame before present,
 so it can be used in automated smoke tests without relying on desktop capture.
+
+For repeatable local smokes, `tools/replay_screenshot_smoke.py` wraps those
+environment variables, runs `wowee --replay`, and validates that the resulting
+PNG has plausible dimensions and nonblank pixel variation. When `--event` is
+set, it first scans the JSONL on WoWee's active replay map and fails early if the
+recording has no matching `target`, `combat`, `damage`, or `death` sample:
+
+```bash
+python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --event death \
+  --focus death \
+  --output build/bin/wowee_replay_death.png
+```
+
+Use `--event damage` for deterministic captures at the first explicit schema v3
+damage event:
+
+```bash
+python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --event damage \
+  --focus damage \
+  --output build/bin/wowee_replay_damage.png
+```
+
+Use `--event-offset-ms <ms>` to capture follow-up frames relative to an event
+without hand-calculating the absolute server timestamp:
+
+```bash
+python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --event damage \
+  --event-offset-ms 3000 \
+  --output build/bin/wowee_replay_damage_plus_3s.png
+```
+
+For a compact visual scrub proof, `tools/replay_contact_sheet.py` runs multiple
+event-relative screenshot smokes and assembles the validated frames into one
+labeled PNG. Each frame label includes the event, offset, replay map, and
+captured server `ms` value so the proof image remains self-describing outside
+the terminal log:
+
+```bash
+python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --wowee ./build/bin/wowee \
+  --event damage \
+  --event death \
+  --offset-ms 0,500,3000 \
+  --min-frame-delta 0.1 \
+  --output build/bin/wowee_replay_contact_sheet.png
+```
+
+`--min-frame-delta <rgb-bytes>` optionally fails the contact-sheet run when any
+adjacent captured thumbnails are too visually similar. This catches stale
+multi-frame captures where every individual PNG is valid and nonblank, but the
+sheet does not actually prove motion or event progression. Leave it unset for
+static comparison sheets.
+
+Use `--ms <server-ms>[,<server-ms>...]` for deterministic contact-sheet captures
+inside a known movement interval. Explicit `--ms` captures skip event preflight
+and cannot be combined with `--event`. Explicit timestamp captures follow the
+first recorded player by default; pass `--no-follow` to keep the high observer
+camera, or use `--follow-distance` / `--follow-height` to tune the angled view.
+
+Use `--timeline-samples <n>` to capture `n` evenly spaced server-ms frames across
+the active replay map. This is useful for checking ordinary movement, camera
+framing, terrain alignment, and label density across a longer recording instead
+of only around a combat/death event:
+
+```bash
+python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --wowee ./build/bin/wowee \
+  --timeline-samples 6 \
+  --output build/bin/wowee_replay_timeline_sheet.png
+```
+
+The same follow-camera flags are accepted by
+`tools/replay_screenshot_smoke.py` for single-frame captures.
+
+Use `--validate-only --output <png>` to re-check an existing screenshot without
+launching WoWee.
 
 Local validation completed:
 
 - `cmake --build build --parallel "$(sysctl -n hw.logicalcpu)"` passed.
 - `./build/bin/wowee --help` prints `Usage: ./build/bin/wowee [--replay <godview.jsonl>]`.
-- `./build/bin/test_godview_recording` passed 73 assertions covering JSONL
+- `./build/bin/test_godview_recording` passed 198 assertions covering JSONL
   parsing, out-of-order server `ms` sorting, map-filtered interpolation, v1/v2
-  GUID handling, recorded equipment, creature interpolation, optional `gender`,
-  string/hex GUID values, and malformed-line errors.
+  GUID handling, direct VMaNGOS-to-render coordinate alignment, shortest-path
+  orientation wrap interpolation, recorded equipment, creature interpolation,
+  optional `gender`, string/hex GUID values, and malformed-line errors.
 - `./build/bin/test_entity` passed 71 assertions.
 - `./build/bin/test_world_map_coordinate_projection` passed 30 assertions.
 - `./build/bin/test_opcode_table` passed 18 assertions.

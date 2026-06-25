@@ -359,13 +359,19 @@ int handleInfoAdt(int& i, int argc, char** argv) {
     }
     // Walk chunks and tally height range + loaded count + water/holes.
     int loadedChunks = 0, holeChunks = 0, waterChunks = 0;
+    std::map<uint16_t, int> waterTypeHist;
     float minH = 1e30f, maxH = -1e30f;
     for (size_t c = 0; c < 256; ++c) {
         const auto& chunk = terrain.chunks[c];
         if (!chunk.heightMap.isLoaded()) continue;
         loadedChunks++;
         if (chunk.holes != 0) holeChunks++;
-        if (terrain.waterData[c].hasWater()) waterChunks++;
+        if (terrain.waterData[c].hasWater()) {
+            waterChunks++;
+            for (const auto& layer : terrain.waterData[c].layers) {
+                waterTypeHist[layer.liquidType]++;
+            }
+        }
         for (float h : chunk.heightMap.heights) {
             if (std::isfinite(h)) {
                 if (h < minH) minH = h;
@@ -384,6 +390,11 @@ int handleInfoAdt(int& i, int argc, char** argv) {
         j["loadedChunks"] = loadedChunks;
         j["holeChunks"] = holeChunks;
         j["waterChunks"] = waterChunks;
+        nlohmann::json waterTypes = nlohmann::json::array();
+        for (const auto& [type, count] : waterTypeHist) {
+            waterTypes.push_back({{"type", type}, {"layerCount", count}});
+        }
+        j["waterTypes"] = waterTypes;
         j["heightMin"] = (loadedChunks > 0) ? minH : 0.0f;
         j["heightMax"] = (loadedChunks > 0) ? maxH : 0.0f;
         j["textures"] = terrain.textures.size();
@@ -404,6 +415,13 @@ int handleInfoAdt(int& i, int argc, char** argv) {
     }
     std::printf("  hole chunks      : %d (with cave/gap masks)\n", holeChunks);
     std::printf("  water chunks     : %d\n", waterChunks);
+    if (!waterTypeHist.empty()) {
+        std::printf("  water types      :");
+        for (const auto& [type, count] : waterTypeHist) {
+            std::printf(" %u=%d", type, count);
+        }
+        std::printf("\n");
+    }
     std::printf("  textures         : %zu\n", terrain.textures.size());
     std::printf("  doodad names     : %zu (%zu placements)\n",
                 terrain.doodadNames.size(),

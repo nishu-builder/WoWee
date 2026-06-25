@@ -123,6 +123,8 @@ std::optional<GodviewRecording::EventKind> replayEventKindFromEnv(const char* ke
     });
     if (value == "target") return GodviewRecording::EventKind::Target;
     if (value == "combat") return GodviewRecording::EventKind::Combat;
+    if (value == "damage") return GodviewRecording::EventKind::Damage;
+    if (value == "death" || value == "dead") return GodviewRecording::EventKind::Death;
     return GodviewRecording::EventKind::TargetOrCombat;
 }
 
@@ -2395,9 +2397,14 @@ void Application::applyReplayCameraFollow(float deltaTime) {
     }
 
     glm::vec3 pivot = focus->renderPosition + glm::vec3(0.0f, 0.0f, 2.0f);
-    glm::vec2 viewBack(0.0f, -1.0f);
-    const float baseBackDistance = envFloatValue("WOWEE_REPLAY_FOLLOW_DISTANCE", 38.0f, 8.0f, 300.0f);
-    const float baseHeight = envFloatValue("WOWEE_REPLAY_FOLLOW_HEIGHT", 48.0f, 6.0f, 240.0f);
+    glm::vec2 viewBack(-std::cos(focus->renderYawRad), -std::sin(focus->renderYawRad));
+    if (!std::isfinite(viewBack.x) || !std::isfinite(viewBack.y) || glm::length(viewBack) < 0.001f) {
+        viewBack = glm::vec2(0.0f, -1.0f);
+    } else {
+        viewBack = glm::normalize(viewBack);
+    }
+    const float baseBackDistance = envFloatValue("WOWEE_REPLAY_FOLLOW_DISTANCE", 190.0f, 8.0f, 360.0f);
+    const float baseHeight = envFloatValue("WOWEE_REPLAY_FOLLOW_HEIGHT", 115.0f, 6.0f, 260.0f);
     float backDistance = baseBackDistance;
     float height = baseHeight;
     uint64_t targetGuid = 0;
@@ -2410,18 +2417,11 @@ void Application::applyReplayCameraFollow(float deltaTime) {
         pivot = (pivot + targetPivot) * 0.5f;
         backDistance = std::clamp(baseBackDistance + span * 0.55f,
                                   baseBackDistance,
-                                  std::max(baseBackDistance, 120.0f));
+                                  baseBackDistance + 80.0f);
         height = std::clamp(baseHeight + span * 0.35f,
                             baseHeight,
-                            std::max(baseHeight, 96.0f));
+                            baseHeight + 80.0f);
 
-        if (span > 1.0f) {
-            glm::vec2 pairDir = relation / span;
-            viewBack = glm::normalize(glm::vec2(-pairDir.y, pairDir.x));
-            if (glm::dot(viewBack, glm::vec2(0.0f, -1.0f)) < 0.0f) {
-                viewBack = -viewBack;
-            }
-        }
     }
 
     glm::vec3 desired = pivot + glm::vec3(viewBack.x * backDistance,
@@ -2447,7 +2447,14 @@ void Application::applyReplayCameraFollow(float deltaTime) {
     glm::vec3 forward = pivot - *replayCameraFollowPosition_;
     float horizontal = std::max(1.0f, glm::length(glm::vec2(forward.x, forward.y)));
     float yawDeg = glm::degrees(std::atan2(forward.y, forward.x));
-    float pitchDeg = glm::clamp(glm::degrees(std::atan2(forward.z, horizontal)), -82.0f, -35.0f);
+    float steepPitch = envFloatValue("WOWEE_REPLAY_FOLLOW_STEEP_PITCH", -60.0f, -89.0f, -15.0f);
+    float shallowPitch = envFloatValue("WOWEE_REPLAY_FOLLOW_SHALLOW_PITCH", -24.0f, -89.0f, -15.0f);
+    if (steepPitch > shallowPitch) {
+        std::swap(steepPitch, shallowPitch);
+    }
+    float pitchDeg = glm::clamp(glm::degrees(std::atan2(forward.z, horizontal)),
+                                steepPitch,
+                                shallowPitch);
 
     if (auto* cc = renderer->getCameraController()) {
         cc->setFreeCameraPose(*replayCameraFollowPosition_, yawDeg, pitchDeg);
@@ -2511,6 +2518,9 @@ bool Application::startReplayMode() {
     const bool replayScreenshotRequested = replayScreenshotPathEnv && *replayScreenshotPathEnv;
     const char* replayScreenshotMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS");
     const bool replayScreenshotHasTargetMs = replayScreenshotMsEnv && *replayScreenshotMsEnv;
+    const char* replayScreenshotEventOffsetMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS");
+    const bool replayScreenshotHasEventOffset =
+        replayScreenshotEventOffsetMsEnv && *replayScreenshotEventOffsetMsEnv;
     const auto replayScreenshotEventKind =
         replayScreenshotRequested && !replayScreenshotHasTargetMs
             ? replayEventKindFromEnv("WOWEE_REPLAY_SCREENSHOT_EVENT")
@@ -2520,28 +2530,46 @@ bool Application::startReplayMode() {
     replayCameraFollowPosition_.reset();
     replayCameraFollowGuid_ = 0;
     replayCameraFollowTargetGuid_ = 0;
-    if (envFlagEnabled("WOWEE_REPLAY_START_EVENT", false) || replayScreenshotEventKind) {
+    const bool replayStartEventRequested = envFlagEnabled("WOWEE_REPLAY_START_EVENT", false);
+    std::optional<GodviewRecording::EventKind> replayStartEventKind;
+    if (replayStartEventRequested || replayScreenshotEventKind) {
         const auto eventKind = replayScreenshotEventKind.value_or(
             GodviewRecording::EventKind::TargetOrCombat);
+        replayStartEventKind = eventKind;
         if (!replay_->seekEvent(eventKind, 1, true)) {
             if (eventKind == GodviewRecording::EventKind::Combat) {
                 LOG_WARNING("Replay combat event requested, but no combat snapshot was found");
             } else if (eventKind == GodviewRecording::EventKind::Target) {
                 LOG_WARNING("Replay target event requested, but no target snapshot was found");
+            } else if (eventKind == GodviewRecording::EventKind::Damage) {
+                LOG_WARNING("Replay damage event requested, but no damage event was found");
+            } else if (eventKind == GodviewRecording::EventKind::Death) {
+                LOG_WARNING("Replay death event requested, but no death snapshot was found");
             } else {
                 LOG_WARNING("Replay target/combat event requested, but no target/combat snapshot was found");
             }
         }
     }
+    const bool replayFollowCameraEnabled = envFlagEnabled("WOWEE_REPLAY_FOLLOW_CAMERA", true);
+    bool replayFocusSelected = false;
     if (const char* focusPlayer = std::getenv("WOWEE_REPLAY_FOCUS_PLAYER")) {
         if (*focusPlayer) {
             if (replay_->focusPlayerByQuery(focusPlayer)) {
-                replay_->setCameraFollowEnabled(true);
+                replayFocusSelected = true;
             } else {
                 LOG_WARNING("Replay focus player not found: ", focusPlayer);
             }
         }
     }
+    if (!replayFocusSelected && replayFollowCameraEnabled) {
+        if (replayStartEventKind) {
+            replayFocusSelected = replay_->focusEventPlayer(*replayStartEventKind);
+        }
+        if (!replayFocusSelected) {
+            replayFocusSelected = replay_->focusPlayerByQuery("first");
+        }
+    }
+    replay_->setCameraFollowEnabled(replayFollowCameraEnabled && replayFocusSelected);
     const bool cleanReplayCapture = envFlagEnabled("WOWEE_REPLAY_CLEAN_CAPTURE", false);
     replay_->setOverlayVisible(!cleanReplayCapture &&
                                !envFlagEnabled("WOWEE_REPLAY_HIDE_OVERLAY", false));
@@ -2550,9 +2578,29 @@ bool Application::startReplayMode() {
             minimap->setEnabled(false);
         }
     }
+
+    std::optional<double> replayScreenshotEventOffsetTargetMs;
+    double replayScreenshotEventOffsetMs = 0.0;
+    if (replayScreenshotRequested &&
+        !replayScreenshotHasTargetMs &&
+        replayScreenshotEventKind &&
+        replayScreenshotHasEventOffset) {
+        char* end = nullptr;
+        double offsetMs = std::strtod(replayScreenshotEventOffsetMsEnv, &end);
+        if (end != replayScreenshotEventOffsetMsEnv && std::isfinite(offsetMs) && offsetMs >= 0.0) {
+            double startMs = static_cast<double>(replay_->startMs());
+            double endMs = static_cast<double>(replay_->endMs());
+            double targetMs = std::clamp(replay_->currentMs() + offsetMs, startMs, endMs);
+            replay_->seekToMs(targetMs, true);
+            replayScreenshotEventOffsetMs = offsetMs;
+            replayScreenshotEventOffsetTargetMs = targetMs;
+        }
+    }
+
     replay_->update(0.0f, *gameHandler, *entitySpawner_, *renderer);
     entitySpawner_->update();
     replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
+    applyReplayCameraFollow(0.0f);
 
     replayScreenshotPath_.clear();
     replayScreenshotTargetMs_ = -1.0;
@@ -2575,6 +2623,11 @@ bool Application::startReplayMode() {
                          " at replay +",
                          (replayScreenshotTargetMs_ - startMs), "ms");
             }
+        } else if (replayScreenshotEventOffsetTargetMs) {
+            double startMs = static_cast<double>(replay_->startMs());
+            LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                     " at event +", replayScreenshotEventOffsetMs, "ms (replay +",
+                     (*replayScreenshotEventOffsetTargetMs - startMs), "ms)");
         }
         if (replayScreenshotTargetMs_ < 0.0) {
             replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);

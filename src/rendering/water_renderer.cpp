@@ -6,6 +6,7 @@
 #include "rendering/vk_frame_data.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/frustum.hpp"
+#include "rendering/liquid_type.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
 #include "core/logger.hpp"
@@ -546,12 +547,12 @@ void WaterRenderer::updateMaterialUBO(WaterSurface& surface) {
 
     // WMO liquid material override
     if (surface.wmoId != 0) {
-        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
-        if (basicType == 2) {
+        const auto basicType = classifyBasicLiquidType(surface.liquidType);
+        if (basicType == BasicLiquidType::Magma) {
             // Magma — bright orange-red, opaque
             color = glm::vec4(1.0f, 0.35f, 0.05f, 1.0f);
             alpha = 0.95f;
-        } else if (basicType == 3) {
+        } else if (basicType == BasicLiquidType::Slime) {
             // Slime — green, semi-opaque
             color = glm::vec4(0.2f, 0.6f, 0.1f, 1.0f);
             alpha = 0.85f;
@@ -775,8 +776,8 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
         const int maskBytes = (MERGED_W * MERGED_W + 7) / 8;
         // For ocean water (basicType 1) at sea level, fill the entire tile.
         // Depth testing against terrain handles land occlusion naturally.
-        uint8_t basicType = (key.liquidType == 0) ? 0 : ((key.liquidType - 1) % 4);
-        bool isOcean = (basicType == 1) && (std::abs(groupHeight) < 1.0f);
+        const auto basicType = classifyBasicLiquidType(key.liquidType);
+        bool isOcean = (basicType == BasicLiquidType::Ocean) && (std::abs(groupHeight) < 1.0f);
         surface.mask.resize(maskBytes, isOcean ? 0xFF : 0x00);
 
         // ── Fill from each contributing chunk ──
@@ -1098,19 +1099,19 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
         bool isWmoWater = (surface.wmoId != 0);
         bool canalProfile = isWmoWater || (surface.liquidType == 5);
-        uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        const auto basicType = classifyBasicLiquidType(surface.liquidType);
         // WMO water gets no wave displacement — prevents visible slosh at
         // geometry edges (bridges, docks) where water is far below the surface.
-        float waveAmp = isWmoWater ? 0.0f : (basicType == 1 ? 0.35f : 0.08f);
-        float waveFreq = canalProfile ? 0.35f : (basicType == 1 ? 0.20f : 0.30f);
-        float waveSpeed = canalProfile ? 1.00f : (basicType == 1 ? 1.20f : 1.40f);
+        float waveAmp = isWmoWater ? 0.0f : (basicType == BasicLiquidType::Ocean ? 0.35f : 0.08f);
+        float waveFreq = canalProfile ? 0.35f : (basicType == BasicLiquidType::Ocean ? 0.20f : 0.30f);
+        float waveSpeed = canalProfile ? 1.00f : (basicType == BasicLiquidType::Ocean ? 1.20f : 1.40f);
 
         WaterPushConstants push{};
         push.model = glm::mat4(1.0f);
         push.waveAmp = waveAmp;
         push.waveFreq = waveFreq;
         push.waveSpeed = waveSpeed;
-        push.liquidBasicType = static_cast<float>(basicType);
+        push.liquidBasicType = static_cast<float>(static_cast<uint8_t>(basicType));
 
         vkCmdPushConstants(cmd, pipelineLayout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1645,22 +1646,20 @@ bool WaterRenderer::isWmoWaterAt(float glX, float glY) const {
 }
 
 glm::vec4 WaterRenderer::getLiquidColor(uint16_t liquidType) const {
-    uint8_t basicType = (liquidType == 0) ? 0 : ((liquidType - 1) % 4);
-    switch (basicType) {
-        case 0:  return glm::vec4(0.10f, 0.28f, 0.55f, 1.0f); // inland: richer blue
-        case 1:  return glm::vec4(0.04f, 0.16f, 0.38f, 1.0f); // ocean: deep blue
-        case 2:  return glm::vec4(0.9f, 0.3f, 0.05f, 1.0f);   // magma
-        case 3:  return glm::vec4(0.2f, 0.6f, 0.1f, 1.0f);    // slime
+    switch (classifyBasicLiquidType(liquidType)) {
+        case BasicLiquidType::Water: return glm::vec4(0.10f, 0.28f, 0.55f, 1.0f); // inland: richer blue
+        case BasicLiquidType::Ocean: return glm::vec4(0.04f, 0.16f, 0.38f, 1.0f); // ocean: deep blue
+        case BasicLiquidType::Magma: return glm::vec4(0.9f, 0.3f, 0.05f, 1.0f);   // magma
+        case BasicLiquidType::Slime: return glm::vec4(0.2f, 0.6f, 0.1f, 1.0f);    // slime
         default: return glm::vec4(0.10f, 0.28f, 0.55f, 1.0f);
     }
 }
 
 float WaterRenderer::getLiquidAlpha(uint16_t liquidType) const {
-    uint8_t basicType = (liquidType == 0) ? 0 : ((liquidType - 1) % 4);
-    switch (basicType) {
-        case 1:  return 0.72f;  // ocean
-        case 2:  return 0.75f;  // magma
-        case 3:  return 0.65f;  // slime
+    switch (classifyBasicLiquidType(liquidType)) {
+        case BasicLiquidType::Ocean: return 0.72f;
+        case BasicLiquidType::Magma: return 0.75f;
+        case BasicLiquidType::Slime: return 0.65f;
         default: return 0.48f;  // inland water
     }
 }
@@ -1964,8 +1963,7 @@ std::optional<float> WaterRenderer::getDominantWaterHeight(const glm::vec3& came
 
     for (const auto& surface : surfaces) {
         // Skip magma/slime — only reflect water/ocean
-        uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
-        if (basicType >= 2) continue;
+        if (!isReflectiveLiquid(surface.liquidType)) continue;
 
         // Compute center of surface in world space
         glm::vec3 center = surface.origin +

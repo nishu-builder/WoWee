@@ -972,20 +972,26 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ? gameHandler.getEntityManager().getEntity(unitTargetGuid)
             : nullptr;
         const bool recordedCombat = offlineReplay && unit->isRecordedCombat() && !isCorpse;
+        std::string replayEventCue = offlineReplay ? unit->getReplayEventCue() : "";
+        const bool hasReplayEventCue = !replayEventCue.empty();
         const bool isReplayTargeted = offlineReplay && replayTargetedGuids.count(guid) != 0;
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
         if (isPlayer && !settingsPanel_.showFriendlyNameplates_ && !offlineReplay) continue;
         if (!isPlayer) {
             if (offlineReplay) {
-                if (!isTarget && unitTargetGuid == 0 && !recordedCombat && !isReplayTargeted) continue;
+                if (!isTarget && unitTargetGuid == 0 && !recordedCombat &&
+                    !hasReplayEventCue && !isReplayTargeted && !isCorpse) {
+                    continue;
+                }
             } else if (!showNameplates_) {
                 continue;
             }
         }
 
-        // For corpses (dead units), only show a minimal grey nameplate if selected
-        if (isCorpse && !isTarget && !isReplayTargeted) continue;
+        // Online corpses stay quiet unless selected, but replay death samples are
+        // part of the recording and need to remain readable in god-view captures.
+        if (isCorpse && !offlineReplay && !isTarget && !isReplayTargeted) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
@@ -1031,7 +1037,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 float dx = sx - peerScreen.x;
                 float dy = sy - peerScreen.y;
                 float len = std::sqrt(dx * dx + dy * dy);
-                const bool targetPair = hasRecordedTarget || isReplayTargeted;
+                const bool targetPair = hasRecordedTarget || isReplayTargeted || isCorpse;
                 const float minSeparation = (targetPair ? 168.0f : 118.0f) *
                                             settingsPanel_.nameplateScale_;
                 if (len >= minSeparation) return;
@@ -1054,6 +1060,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 auto sourceIt = replayTargetSourceGuids.find(guid);
                 if (sourceIt != replayTargetSourceGuids.end()) {
                     separateFromReplayPeer(sourceIt->second);
+                }
+            }
+            if (isCorpse && !isPlayer) {
+                for (const auto& peerEntry : gameHandler.getEntityManager().getEntities()) {
+                    const auto& peerEntity = peerEntry.second;
+                    if (!peerEntity || peerEntity->getType() != game::ObjectType::PLAYER) continue;
+                    separateFromReplayPeer(peerEntry.first);
                 }
             }
             const float screenPad = 12.0f;
@@ -1119,6 +1132,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (recordedCombat) {
             borderColor = IM_COL32(255, 70, 70, A(230));
         }
+        if (offlineReplay && isCorpse) {
+            borderColor = IM_COL32(165, 165, 165, A(230));
+        }
+        if (hasReplayEventCue) {
+            borderColor = replayEventCue == "death"
+                ? IM_COL32(255, 118, 118, A(245))
+                : IM_COL32(255, 230, 70, A(245));
+        }
         if (isReplayTargeted) {
             borderColor = IM_COL32(120, 240, 255, A(230));
         }
@@ -1170,59 +1191,59 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 const float maxTetherLength = (isPlayer ? 620.0f : 280.0f) * scale;
                 if (len <= maxTetherLength) {
                     ImU32 lineColor = recordedCombat
-                        ? IM_COL32(120, 240, 255, A(245))
-                        : IM_COL32(255, 215, 95, A(225));
-                    ImU32 lineShadow = IM_COL32(0, 0, 0, A(135));
-                    drawList->AddLine(lineStart, targetScreen, lineShadow, 4.0f * scale);
-                    drawList->AddLine(lineStart, targetScreen, lineColor, 2.4f * scale);
+                        ? IM_COL32(120, 240, 255, A(220))
+                        : IM_COL32(255, 215, 95, A(205));
+                    ImU32 lineShadow = IM_COL32(0, 0, 0, A(85));
+                    drawList->AddLine(lineStart, targetScreen, lineShadow, 2.8f * scale);
+                    drawList->AddLine(lineStart, targetScreen, lineColor, 1.5f * scale);
                     if (len > 8.0f * scale) {
                         float ux = dx / len;
                         float uy = dy / len;
-                        ImVec2 arrowBase(targetScreen.x - ux * 10.0f * scale,
-                                          targetScreen.y - uy * 10.0f * scale);
-                        ImVec2 perp(-uy * 5.0f * scale, ux * 5.0f * scale);
+                        ImVec2 arrowBase(targetScreen.x - ux * 8.0f * scale,
+                                          targetScreen.y - uy * 8.0f * scale);
+                        ImVec2 perp(-uy * 4.0f * scale, ux * 4.0f * scale);
                         drawList->AddTriangleFilled(
                             targetScreen,
                             ImVec2(arrowBase.x + perp.x, arrowBase.y + perp.y),
                             ImVec2(arrowBase.x - perp.x, arrowBase.y - perp.y),
                             lineShadow);
-                        ImVec2 innerBase(targetScreen.x - ux * 8.0f * scale,
-                                         targetScreen.y - uy * 8.0f * scale);
-                        ImVec2 innerPerp(-uy * 3.4f * scale, ux * 3.4f * scale);
+                        ImVec2 innerBase(targetScreen.x - ux * 6.5f * scale,
+                                         targetScreen.y - uy * 6.5f * scale);
+                        ImVec2 innerPerp(-uy * 2.8f * scale, ux * 2.8f * scale);
                         drawList->AddTriangleFilled(
                             targetScreen,
                             ImVec2(innerBase.x + innerPerp.x, innerBase.y + innerPerp.y),
                             ImVec2(innerBase.x - innerPerp.x, innerBase.y - innerPerp.y),
                             lineColor);
                     }
-                    const float ringRadius = 9.0f * scale;
-                    const float tickRadius = 14.0f * scale;
-                    drawList->AddCircle(targetScreen, ringRadius, lineShadow, 20, 4.0f * scale);
-                    drawList->AddCircle(targetScreen, ringRadius, lineColor, 20, 2.0f * scale);
+                    const float ringRadius = 7.5f * scale;
+                    const float tickRadius = 11.5f * scale;
+                    drawList->AddCircle(targetScreen, ringRadius, lineShadow, 20, 2.4f * scale);
+                    drawList->AddCircle(targetScreen, ringRadius, lineColor, 20, 1.3f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
                                       ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
-                                      lineShadow, 3.0f * scale);
+                                      lineShadow, 2.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
                                       ImVec2(targetScreen.x + tickRadius, targetScreen.y),
-                                      lineShadow, 3.0f * scale);
+                                      lineShadow, 2.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
                                       ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
-                                      lineShadow, 3.0f * scale);
+                                      lineShadow, 2.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
                                       ImVec2(targetScreen.x, targetScreen.y + tickRadius),
-                                      lineShadow, 3.0f * scale);
+                                      lineShadow, 2.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x - tickRadius, targetScreen.y),
                                       ImVec2(targetScreen.x - ringRadius * 0.55f, targetScreen.y),
-                                      lineColor, 1.6f * scale);
+                                      lineColor, 1.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x + ringRadius * 0.55f, targetScreen.y),
                                       ImVec2(targetScreen.x + tickRadius, targetScreen.y),
-                                      lineColor, 1.6f * scale);
+                                      lineColor, 1.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y - tickRadius),
                                       ImVec2(targetScreen.x, targetScreen.y - ringRadius * 0.55f),
-                                      lineColor, 1.6f * scale);
+                                      lineColor, 1.0f * scale);
                     drawList->AddLine(ImVec2(targetScreen.x, targetScreen.y + ringRadius * 0.55f),
                                       ImVec2(targetScreen.x, targetScreen.y + tickRadius),
-                                      lineColor, 1.6f * scale);
+                                      lineColor, 1.0f * scale);
                 }
             }
         }
@@ -1493,13 +1514,21 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
         }
+        if (hasReplayEventCue) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += replayEventCue;
+        }
+        if (offlineReplay && isCorpse) {
+            if (!subLabel.empty()) subLabel += "  ";
+            subLabel += "dead";
+        }
         if (recordedCombat) {
             if (!subLabel.empty()) subLabel += "  ";
             subLabel += "combat";
         }
         if (isReplayTargeted) {
             if (!subLabel.empty()) subLabel += "  ";
-            subLabel += "targeted";
+            subLabel += "target";
         }
         if (hasRecordedTarget) {
             std::string targetName = recordedTargetEntity ? getEntityName(recordedTargetEntity) : "target";
@@ -1507,7 +1536,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 targetName = "target";
             }
             if (!subLabel.empty()) subLabel += "  ";
-            subLabel += "target: " + targetName;
+            subLabel += "-> " + targetName;
         }
         ImVec2 subSize(0.0f, 0.0f);
         if (!subLabel.empty()) {
@@ -1521,19 +1550,19 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             if (!subLabel.empty()) {
                 labelH += subSize.y + 1.0f;
             }
-            const float padX = 4.0f * settingsPanel_.nameplateScale_;
-            const float padY = 2.0f * settingsPanel_.nameplateScale_;
+            const float padX = 3.0f * settingsPanel_.nameplateScale_;
+            const float padY = 1.5f * settingsPanel_.nameplateScale_;
             const float bgX = sx - labelW * 0.5f - padX;
             const float bgY = nameY - padY;
             drawList->AddRectFilled(
                 ImVec2(bgX, bgY),
                 ImVec2(bgX + labelW + padX * 2.0f, bgY + labelH + padY * 2.0f),
-                IM_COL32(4, 6, 8, A(105)),
+                IM_COL32(4, 6, 8, A(78)),
                 2.0f);
             drawList->AddRect(
                 ImVec2(bgX, bgY),
                 ImVec2(bgX + labelW + padX * 2.0f, bgY + labelH + padY * 2.0f),
-                IM_COL32(255, 255, 255, A(35)),
+                IM_COL32(255, 255, 255, A(24)),
                 2.0f);
         }
 
@@ -1544,8 +1573,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (!subLabel.empty()) {
             float subX = sx - subSize.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
+            ImU32 subColor = IM_COL32(180, 180, 180, A(200));
+            if (hasReplayEventCue) {
+                subColor = replayEventCue == "death"
+                    ? IM_COL32(255, 118, 118, A(235))
+                    : IM_COL32(255, 230, 70, A(235));
+            }
             drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
-            drawList->AddText(ImVec2(subX,         subY),         IM_COL32(180, 180, 180, A(200)), subLabel.c_str());
+            drawList->AddText(ImVec2(subX,         subY),         subColor, subLabel.c_str());
         }
 
         // Group leader crown to the right of the name on player nameplates

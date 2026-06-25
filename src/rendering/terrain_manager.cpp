@@ -5,6 +5,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "rendering/liquid_type.hpp"
 #include "rendering/camera.hpp"
 #include "audio/ambient_sound_manager.hpp"
 #include "core/coordinates.hpp"
@@ -1168,8 +1169,7 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                         if (!group.liquid.hasLiquid()) continue;
                         if (group.flags & 0x2000) {
                             uint16_t lt = group.liquid.materialId;
-                            uint8_t basicType = (lt == 0) ? 0 : ((lt - 1) % 4);
-                            if (basicType < 2) continue;
+                            if (isReflectiveLiquid(lt)) continue;
                         }
                         waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId);
                         liquidGroupsLoaded++;
