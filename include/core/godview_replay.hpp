@@ -75,6 +75,9 @@ public:
 
 private:
     void emitReplayDamageText(game::GameHandler& gameHandler);
+    std::optional<uint64_t> activeFocusedEventTargetGuid(
+        const std::vector<InterpolatedPlayer>& players,
+        const std::vector<InterpolatedCreature>& creatures) const;
     void applyGameState(game::GameHandler& gameHandler,
                         EntitySpawner& entitySpawner,
                         const std::vector<InterpolatedPlayer>& players,
@@ -106,6 +109,7 @@ private:
     bool cameraFollowEnabled_ = false;
     uint64_t focusedPlayerGuid_ = 0;
     uint64_t focusedEventTargetGuid_ = 0;
+    double focusedEventTargetMs_ = 0.0;
     std::unordered_set<uint64_t> activePlayerGuids_;
     std::unordered_set<uint64_t> activeCreatureGuids_;
     std::unordered_map<uint64_t, bool> lastMoving_;

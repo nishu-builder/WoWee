@@ -37,6 +37,7 @@ constexpr float kReplayInferredAttackMaxRange = 45.0f;
 constexpr float kReplayInferredAttackStartAlpha = 0.02f;
 constexpr float kReplayInferredAttackEndAlpha = 0.85f;
 constexpr double kReplayDamageTextWindowMs = 750.0;
+constexpr double kReplayEventTargetContextWindowMs = 2500.0;
 constexpr double kReplayEventFutureSlackMs = 0.5;
 
 struct ReplayAttackPulse {
@@ -726,6 +727,7 @@ bool GodviewReplay::load(const std::string& path, std::string& error) {
     cameraFollowEnabled_ = false;
     focusedPlayerGuid_ = 0;
     focusedEventTargetGuid_ = 0;
+    focusedEventTargetMs_ = 0.0;
 
     LOG_INFO("Godview replay active map: ", mapId_,
              " snapshots=", recording_.snapshotCountForMap(mapId_),
@@ -768,6 +770,7 @@ void GodviewReplay::start() {
     replayMountSpawnQueued_.clear();
     nextReplayMountGuid_ = kReplayMountGuidStart;
     focusedEventTargetGuid_ = 0;
+    focusedEventTargetMs_ = 0.0;
 }
 
 void GodviewReplay::setCurrentMs(double value) {
@@ -806,6 +809,42 @@ void GodviewReplay::emitReplayDamageText(game::GameHandler& gameHandler) {
         }
         return false;
     });
+}
+
+std::optional<uint64_t> GodviewReplay::activeFocusedEventTargetGuid(
+    const std::vector<InterpolatedPlayer>& players,
+    const std::vector<InterpolatedCreature>& creatures) const {
+    if (focusedPlayerGuid_ == 0 || focusedEventTargetGuid_ == 0 || focusedEventTargetMs_ <= 0.0) {
+        return std::nullopt;
+    }
+    if (currentMs_ + kReplayEventFutureSlackMs < focusedEventTargetMs_) {
+        return std::nullopt;
+    }
+    if (currentMs_ - focusedEventTargetMs_ > kReplayEventTargetContextWindowMs) {
+        return std::nullopt;
+    }
+
+    bool focusedPlayerPresent = false;
+    bool targetPresent = false;
+    for (const auto& sampled : players) {
+        if (sampled.player.guid == focusedPlayerGuid_) {
+            focusedPlayerPresent = true;
+        }
+        if (sampled.player.guid == focusedEventTargetGuid_) {
+            targetPresent = true;
+        }
+    }
+    for (const auto& sampled : creatures) {
+        if (sampled.creature.guid == focusedEventTargetGuid_) {
+            targetPresent = true;
+            break;
+        }
+    }
+
+    if (!focusedPlayerPresent || !targetPresent) {
+        return std::nullopt;
+    }
+    return focusedEventTargetGuid_;
 }
 
 uint64_t GodviewReplay::replayMountGuidForPlayer(uint64_t playerGuid) {
@@ -881,6 +920,7 @@ void GodviewReplay::focusNextPlayer(int direction) {
     if (players.empty()) {
         focusedPlayerGuid_ = 0;
         focusedEventTargetGuid_ = 0;
+        focusedEventTargetMs_ = 0.0;
         cameraFollowEnabled_ = false;
         return;
     }
@@ -906,6 +946,7 @@ void GodviewReplay::focusNextPlayer(int direction) {
 
     focusedPlayerGuid_ = players[index].player.guid;
     focusedEventTargetGuid_ = 0;
+    focusedEventTargetMs_ = 0.0;
     cameraFollowEnabled_ = true;
     LOG_INFO("Replay camera focus: ", players[index].player.name,
              " guid=", players[index].player.rawGuid.empty()
@@ -944,6 +985,7 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
                 }
                 focusedPlayerGuid_ = player.guid;
                 focusedEventTargetGuid_ = 0;
+                focusedEventTargetMs_ = 0.0;
                 LOG_INFO("Replay camera focus: ", player.name,
                          " guid=", player.rawGuid.empty()
                             ? std::to_string(player.guid)
@@ -958,14 +1000,16 @@ bool GodviewReplay::focusPlayerByQuery(const std::string& query) {
 
 bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
     auto players = recording_.samplePlayers(currentMs_, mapId_);
-    if (players.empty()) return false;
     focusedEventTargetGuid_ = 0;
+    focusedEventTargetMs_ = 0.0;
+    if (players.empty()) return false;
 
     auto setFocusedPlayer = [this](const Player& player,
                                    const char* reason,
                                    uint64_t eventTargetGuid = 0) {
         focusedPlayerGuid_ = player.guid;
         focusedEventTargetGuid_ = eventTargetGuid;
+        focusedEventTargetMs_ = eventTargetGuid != 0 ? currentMs_ : 0.0;
         LOG_INFO("Replay camera focus: ", player.name,
                  " guid=", player.rawGuid.empty()
                     ? std::to_string(player.guid)
@@ -1156,8 +1200,10 @@ std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget
                                              selected->player.y,
                                              selected->player.z);
 
-    const uint64_t cameraTargetGuid = focusedEventTargetGuid_ != 0
-        ? focusedEventTargetGuid_
+    auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
+    const auto eventTargetGuid = activeFocusedEventTargetGuid(players, creatures);
+    const uint64_t cameraTargetGuid = eventTargetGuid
+        ? *eventTargetGuid
         : selected->player.targetGuid.value_or(0);
 
     if (cameraTargetGuid != 0) {
@@ -1173,7 +1219,6 @@ std::optional<GodviewReplay::CameraFocusTarget> GodviewReplay::cameraFocusTarget
         }
 
         if (!target.hasTarget) {
-            auto creatures = recording_.sampleCreatures(currentMs_, mapId_);
             for (const auto& creature : creatures) {
                 if (creature.creature.guid != target.targetGuid) continue;
                 target.hasTarget = true;
@@ -1219,23 +1264,7 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
     std::unordered_set<uint64_t> activeCreatures;
     activeCreatures.reserve(creatures.size());
 
-    auto activeFocusedEventTarget = [&](uint64_t playerGuid) -> std::optional<uint64_t> {
-        if (playerGuid != focusedPlayerGuid_ || focusedEventTargetGuid_ == 0) {
-            return std::nullopt;
-        }
-
-        for (const auto& sampled : players) {
-            if (sampled.player.guid == focusedEventTargetGuid_) {
-                return focusedEventTargetGuid_;
-            }
-        }
-        for (const auto& sampled : creatures) {
-            if (sampled.creature.guid == focusedEventTargetGuid_) {
-                return focusedEventTargetGuid_;
-            }
-        }
-        return std::nullopt;
-    };
+    const auto activeEventTargetGuid = activeFocusedEventTargetGuid(players, creatures);
 
     for (const auto& sampled : players) {
         const Player& player = sampled.player;
@@ -1277,8 +1306,10 @@ void GodviewReplay::applyGameState(game::GameHandler& gameHandler,
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_HEALTH, player.hp);
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_MAXHEALTH, std::max<uint32_t>(1, player.maxHp));
         setFieldIfValid(*entity, game::UF::UNIT_FIELD_LEVEL, player.level);
-        const auto eventTargetGuid = activeFocusedEventTarget(player.guid);
-        setTargetFields(*entity, eventTargetGuid ? eventTargetGuid : player.targetGuid);
+        const auto targetGuid = player.guid == focusedPlayerGuid_ && activeEventTargetGuid
+            ? activeEventTargetGuid
+            : player.targetGuid;
+        setTargetFields(*entity, targetGuid);
         syncReplayMountForPlayer(entitySpawner, player, canonical, canonicalYaw);
 
         if (useDisplayModel) {
