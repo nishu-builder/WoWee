@@ -14,6 +14,7 @@ import os
 import struct
 import subprocess
 import sys
+import time
 import zlib
 from pathlib import Path
 
@@ -369,7 +370,7 @@ def cue_color_pixel_count(
     return count
 
 
-def validate_event_cue_color(path: Path, kind: str, minimum_pixels: int) -> None:
+def validate_event_cue_color(path: Path, kind: str, minimum_pixels: int, quiet: bool = False) -> None:
     width, height, color_type, pixels = parse_png(path)
     count = cue_color_pixel_count(width, height, color_type, pixels, kind)
     if count < minimum_pixels:
@@ -377,13 +378,14 @@ def validate_event_cue_color(path: Path, kind: str, minimum_pixels: int) -> None
             f"{kind} event cue color not visible enough: {count} pixels near nameplate "
             f"background, expected at least {minimum_pixels}"
         )
-    print(
-        f"OK: {path} has {count} {kind} event cue color pixels "
-        f"near nameplate backgrounds >= {minimum_pixels}"
-    )
+    if not quiet:
+        print(
+            f"OK: {path} has {count} {kind} event cue color pixels "
+            f"near nameplate backgrounds >= {minimum_pixels}"
+        )
 
 
-def validate_png(path: Path, min_width: int, min_height: int, min_unique_colors: int) -> None:
+def validate_png(path: Path, min_width: int, min_height: int, min_unique_colors: int, quiet: bool = False) -> None:
     if not path.exists():
         raise PngError(f"screenshot was not written: {path}")
     width, height, color_type, pixels = parse_png(path)
@@ -394,10 +396,11 @@ def validate_png(path: Path, min_width: int, min_height: int, min_unique_colors:
         raise PngError(
             f"PNG appears blank: only {unique_colors} unique colors, expected at least {min_unique_colors}"
         )
-    print(
-        f"OK: {path} is {width}x{height}, color_type={color_type}, "
-        f"unique_colors>={unique_colors}"
-    )
+    if not quiet:
+        print(
+            f"OK: {path} is {width}x{height}, color_type={color_type}, "
+            f"unique_colors>={unique_colors}"
+        )
 
 
 def validate_capture(
@@ -407,10 +410,11 @@ def validate_capture(
     min_unique_colors: int,
     expect_cue_color: str | None,
     min_cue_color_pixels: int,
+    quiet: bool = False,
 ) -> None:
-    validate_png(path, min_width, min_height, min_unique_colors)
+    validate_png(path, min_width, min_height, min_unique_colors, quiet)
     if expect_cue_color:
-        validate_event_cue_color(path, expect_cue_color, min_cue_color_pixels)
+        validate_event_cue_color(path, expect_cue_color, min_cue_color_pixels, quiet)
 
 
 def make_test_rgba(width: int, height: int, fill: tuple[int, int, int, int]) -> bytearray:
@@ -501,6 +505,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--frames", type=int, default=90)
     parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument(
+        "--post-capture-exit-timeout",
+        type=float,
+        default=3.0,
+        help=(
+            "Seconds to wait for WoWee to exit after a valid screenshot appears "
+            "before terminating the smoke process."
+        ),
+    )
     parser.add_argument("--min-width", type=int, default=640)
     parser.add_argument("--min-height", type=int, default=360)
     parser.add_argument("--min-unique-colors", type=int, default=32)
@@ -623,23 +636,72 @@ def main() -> int:
 
     command = [str(wowee), "--replay", str(replay)]
     print("running:", " ".join(command))
-    try:
-        result = subprocess.run(
-            command,
-            cwd=wowee.parent,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=args.timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        if exc.stdout:
-            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
-            print(stdout, end="")
-        if exc.stderr:
-            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
-            print(stderr, end="", file=sys.stderr)
+    process = subprocess.Popen(
+        command,
+        cwd=wowee.parent,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    deadline = time.monotonic() + args.timeout
+    valid_since: float | None = None
+    timed_out = False
+    terminated_after_capture = False
+    killed_after_terminate = False
+    while True:
+        returncode = process.poll()
+        if returncode is not None:
+            break
+
+        now = time.monotonic()
+        if valid_since is None and output.exists():
+            try:
+                validate_capture(
+                    output,
+                    args.min_width,
+                    args.min_height,
+                    args.min_unique_colors,
+                    args.expect_cue_color,
+                    args.min_cue_color_pixels,
+                    quiet=True,
+                )
+            except PngError:
+                pass
+            else:
+                valid_since = now
+
+        if valid_since is not None and now - valid_since >= args.post_capture_exit_timeout:
+            process.terminate()
+            terminated_after_capture = True
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                killed_after_terminate = True
+            break
+
+        if now >= deadline:
+            process.kill()
+            timed_out = True
+            break
+
+        sleep_for = min(0.25, max(0.0, deadline - now))
+        if valid_since is not None:
+            sleep_for = min(
+                sleep_for,
+                max(0.0, args.post_capture_exit_timeout - (now - valid_since)),
+            )
+        time.sleep(sleep_for)
+
+    stdout, stderr = process.communicate()
+    if stdout:
+        print(stdout, end="")
+    if stderr:
+        print(stderr, end="", file=sys.stderr)
+
+    if timed_out:
         try:
             validate_capture(
                 output,
@@ -656,13 +718,32 @@ def main() -> int:
         print(f"warning: WoWee timed out after {args.timeout:g}s after writing a valid screenshot; accepting capture",
               file=sys.stderr)
         return 0
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    if result.returncode != 0:
-        print(f"error: WoWee exited with status {result.returncode}", file=sys.stderr)
-        return result.returncode
+
+    if terminated_after_capture:
+        try:
+            validate_capture(
+                output,
+                args.min_width,
+                args.min_height,
+                args.min_unique_colors,
+                args.expect_cue_color,
+                args.min_cue_color_pixels,
+            )
+        except PngError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        suffix = "; killed after SIGTERM" if killed_after_terminate else ""
+        print(
+            "warning: WoWee did not exit within "
+            f"{args.post_capture_exit_timeout:g}s after writing a valid screenshot; "
+            f"terminated smoke process and accepted capture{suffix}",
+            file=sys.stderr,
+        )
+        return 0
+
+    if process.returncode != 0:
+        print(f"error: WoWee exited with status {process.returncode}", file=sys.stderr)
+        return process.returncode
 
     try:
         validate_capture(
