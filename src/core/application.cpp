@@ -2513,6 +2513,9 @@ bool Application::startReplayMode() {
     const bool replayScreenshotRequested = replayScreenshotPathEnv && *replayScreenshotPathEnv;
     const char* replayScreenshotMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_MS");
     const bool replayScreenshotHasTargetMs = replayScreenshotMsEnv && *replayScreenshotMsEnv;
+    const char* replayScreenshotEventOffsetMsEnv = std::getenv("WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS");
+    const bool replayScreenshotHasEventOffset =
+        replayScreenshotEventOffsetMsEnv && *replayScreenshotEventOffsetMsEnv;
     const auto replayScreenshotEventKind =
         replayScreenshotRequested && !replayScreenshotHasTargetMs
             ? replayEventKindFromEnv("WOWEE_REPLAY_SCREENSHOT_EVENT")
@@ -2556,6 +2559,25 @@ bool Application::startReplayMode() {
             minimap->setEnabled(false);
         }
     }
+
+    std::optional<double> replayScreenshotEventOffsetTargetMs;
+    double replayScreenshotEventOffsetMs = 0.0;
+    if (replayScreenshotRequested &&
+        !replayScreenshotHasTargetMs &&
+        replayScreenshotEventKind &&
+        replayScreenshotHasEventOffset) {
+        char* end = nullptr;
+        double offsetMs = std::strtod(replayScreenshotEventOffsetMsEnv, &end);
+        if (end != replayScreenshotEventOffsetMsEnv && std::isfinite(offsetMs) && offsetMs >= 0.0) {
+            double startMs = static_cast<double>(replay_->startMs());
+            double endMs = static_cast<double>(replay_->endMs());
+            double targetMs = std::clamp(replay_->currentMs() + offsetMs, startMs, endMs);
+            replay_->seekToMs(targetMs, true);
+            replayScreenshotEventOffsetMs = offsetMs;
+            replayScreenshotEventOffsetTargetMs = targetMs;
+        }
+    }
+
     replay_->update(0.0f, *gameHandler, *entitySpawner_, *renderer);
     entitySpawner_->update();
     replay_->syncRender(*gameHandler, *entitySpawner_, *renderer);
@@ -2581,6 +2603,11 @@ bool Application::startReplayMode() {
                          " at replay +",
                          (replayScreenshotTargetMs_ - startMs), "ms");
             }
+        } else if (replayScreenshotEventOffsetTargetMs) {
+            double startMs = static_cast<double>(replay_->startMs());
+            LOG_INFO("Replay screenshot scheduled: ", replayScreenshotPath_,
+                     " at event +", replayScreenshotEventOffsetMs, "ms (replay +",
+                     (*replayScreenshotEventOffsetTargetMs - startMs), "ms)");
         }
         if (replayScreenshotTargetMs_ < 0.0) {
             replayScreenshotFramesRemaining_ = envIntValue("WOWEE_REPLAY_SCREENSHOT_FRAMES", 120);

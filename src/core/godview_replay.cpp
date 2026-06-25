@@ -1142,6 +1142,11 @@ bool GodviewReplay::focusEventPlayer(GodviewRecording::EventKind kind) {
     return false;
 }
 
+void GodviewReplay::seekToMs(double value, bool pause) {
+    setCurrentMs(value);
+    paused_ = pause;
+}
+
 bool GodviewReplay::seekEvent(GodviewRecording::EventKind kind,
                               int direction,
                               bool includeCurrent) {

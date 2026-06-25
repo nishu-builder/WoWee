@@ -310,6 +310,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--event", default="death", help="WOWEE_REPLAY_SCREENSHOT_EVENT value.")
     parser.add_argument("--focus", default=None, help="WOWEE_REPLAY_FOCUS_PLAYER value.")
     parser.add_argument("--ms", type=float, default=None, help="Explicit WOWEE_REPLAY_SCREENSHOT_MS value.")
+    parser.add_argument(
+        "--event-offset-ms",
+        type=float,
+        default=None,
+        help="Capture this many milliseconds after --event, keeping event focus/camera setup.",
+    )
     parser.add_argument("--frames", type=int, default=90)
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--min-width", type=int, default=640)
@@ -344,6 +350,9 @@ def main() -> int:
     if not replay.exists():
         print(f"error: replay file not found: {replay}", file=sys.stderr)
         return 2
+    if args.ms is not None and args.event_offset_ms is not None:
+        print("error: --ms and --event-offset-ms are mutually exclusive", file=sys.stderr)
+        return 2
 
     data_path = args.data_path or (Path(os.environ["WOW_DATA_PATH"]) if "WOW_DATA_PATH" in os.environ else None)
     if data_path is None:
@@ -351,13 +360,22 @@ def main() -> int:
         return 2
 
     event = normalize_event(args.event)
+    if args.event_offset_ms is not None and event is None:
+        print("error: --event-offset-ms requires an enabled --event", file=sys.stderr)
+        return 2
     if event and args.ms is None and not args.skip_event_preflight:
         try:
             active_map, event_ms = preflight_replay_event(replay, event)
         except ReplayError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-        print(f"OK: replay has {event} event on active map {active_map} at ms={event_ms}")
+        if args.event_offset_ms is not None:
+            print(
+                f"OK: replay has {event} event on active map {active_map} at ms={event_ms}; "
+                f"offset capture at ms={event_ms + args.event_offset_ms:g}"
+            )
+        else:
+            print(f"OK: replay has {event} event on active map {active_map} at ms={event_ms}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
@@ -372,6 +390,8 @@ def main() -> int:
         env["WOWEE_REPLAY_SCREENSHOT_MS"] = str(args.ms)
     elif event:
         env["WOWEE_REPLAY_SCREENSHOT_EVENT"] = event
+        if args.event_offset_ms is not None:
+            env["WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS"] = str(args.event_offset_ms)
     focus = args.focus if args.focus is not None else (args.event if args.ms is None else None)
     if focus:
         env["WOWEE_REPLAY_FOCUS_PLAYER"] = focus

@@ -286,6 +286,9 @@ target-or-combat snapshot before scheduling a screenshot. Use
 `WOWEE_REPLAY_SCREENSHOT_EVENT=damage` for the first explicit damage event, or
 `WOWEE_REPLAY_SCREENSHOT_EVENT=death` for the first explicit death event or
 player/creature death snapshot.
+Set `WOWEE_REPLAY_SCREENSHOT_EVENT_OFFSET_MS` with an event capture to schedule
+the screenshot that many replay milliseconds after the event while keeping the
+event-focused camera setup.
 This is useful for recordings where the interesting action time changes between
 captures. An explicit `WOWEE_REPLAY_SCREENSHOT_MS` takes precedence when both are
 set.
@@ -336,6 +339,17 @@ python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
   --event damage \
   --focus damage \
   --output build/bin/wowee_replay_damage.png
+```
+
+Use `--event-offset-ms <ms>` to capture follow-up frames relative to an event
+without hand-calculating the absolute server timestamp:
+
+```bash
+python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --event damage \
+  --event-offset-ms 3000 \
+  --output build/bin/wowee_replay_damage_plus_3s.png
 ```
 
 Use `--ms <server-ms>` for deterministic captures inside a known movement
