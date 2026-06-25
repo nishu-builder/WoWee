@@ -379,10 +379,11 @@ Local validation completed:
 
 - `cmake --build build --parallel "$(sysctl -n hw.logicalcpu)"` passed.
 - `./build/bin/wowee --help` prints `Usage: ./build/bin/wowee [--replay <godview.jsonl>]`.
-- `./build/bin/test_godview_recording` passed 183 assertions covering JSONL
+- `./build/bin/test_godview_recording` passed 191 assertions covering JSONL
   parsing, out-of-order server `ms` sorting, map-filtered interpolation, v1/v2
-  GUID handling, recorded equipment, creature interpolation, optional `gender`,
-  string/hex GUID values, and malformed-line errors.
+  GUID handling, direct VMaNGOS-to-render coordinate alignment, recorded
+  equipment, creature interpolation, optional `gender`, string/hex GUID values,
+  and malformed-line errors.
 - `./build/bin/test_entity` passed 71 assertions.
 - `./build/bin/test_world_map_coordinate_projection` passed 30 assertions.
 - `./build/bin/test_opcode_table` passed 18 assertions.

@@ -1,4 +1,5 @@
 #include "core/godview_recording.hpp"
+#include "core/coordinates.hpp"
 
 #include <catch_amalgamated.hpp>
 
@@ -101,6 +102,35 @@ TEST_CASE("GodviewRecording interpolates only within the selected map", "[godvie
     REQUIRE(pair.valid);
     REQUIRE(recording.snapshots()[pair.prev].map == 1);
     REQUIRE(recording.snapshots()[pair.next].map == 1);
+}
+
+TEST_CASE("GodviewRecording VMaNGOS coordinates map directly to render space", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_coordinate_alignment",
+        R"JSON({"t":1700000000000,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"name":"Replayhunt","level":4,"race":2,"class":7,"x":-620.25,"y":-4252.75,"z":40.5,"o":6.20,"hp":80,"maxhp":100,"target":0,"combat":false}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto players = recording.samplePlayers(1000.0, 1);
+    REQUIRE(players.size() == 1);
+
+    const auto& player = players.front().player;
+    glm::vec3 serverPos(player.x, player.y, player.z);
+    glm::vec3 renderPos = wowee::core::coords::canonicalToRender(
+        wowee::core::coords::serverToCanonical(serverPos));
+    REQUIRE(renderPos.x == Catch::Approx(player.x));
+    REQUIRE(renderPos.y == Catch::Approx(player.y));
+    REQUIRE(renderPos.z == Catch::Approx(player.z));
+
+    const float renderYaw = wowee::core::coords::normalizeAngleRad(
+        wowee::core::coords::serverToCanonicalYaw(player.orientation) +
+        wowee::core::coords::PI * 0.5f);
+    REQUIRE(renderYaw == Catch::Approx(
+        wowee::core::coords::normalizeAngleRad(player.orientation)));
 }
 
 TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[godview][recording]") {
