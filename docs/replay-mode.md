@@ -352,6 +352,20 @@ python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
   --output build/bin/wowee_replay_damage_plus_3s.png
 ```
 
+For a compact visual scrub proof, `tools/replay_contact_sheet.py` runs multiple
+event-relative screenshot smokes and assembles the validated frames into one
+labeled PNG:
+
+```bash
+python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
+  --data-path /path/to/extracted/classic-data \
+  --wowee ./build/bin/wowee \
+  --event damage \
+  --event death \
+  --offset-ms 0,500,3000 \
+  --output build/bin/wowee_replay_contact_sheet.png
+```
+
 Use `--ms <server-ms>` for deterministic captures inside a known movement
 interval. Explicit `--ms` captures skip event preflight and do not seek to
 `--event`.
