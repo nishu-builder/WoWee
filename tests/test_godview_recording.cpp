@@ -133,6 +133,27 @@ TEST_CASE("GodviewRecording VMaNGOS coordinates map directly to render space", "
         wowee::core::coords::normalizeAngleRad(player.orientation)));
 }
 
+TEST_CASE("GodviewRecording interpolates wrapped orientations by the shortest turn", "[godview][recording]") {
+    auto path = writeTempRecording(
+        "godview_orientation_wrap",
+        R"JSON({"t":1700000000000,"ms":1000,"map":1,"instance":0,"players":[{"guid":50,"name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":6.20,"hp":80,"maxhp":100,"target":0,"combat":false}],"creatures":[{"guid":2955,"entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":0.05,"hp":60,"maxhp":60,"target":0,"combat":false,"dead":false}]}
+{"t":1700000000500,"ms":2000,"map":1,"instance":0,"players":[{"guid":50,"name":"Replayhunt","level":4,"race":2,"class":7,"x":0.0,"y":0.0,"z":40.0,"o":0.08,"hp":80,"maxhp":100,"target":0,"combat":false}],"creatures":[{"guid":2955,"entry":2955,"name":"Plainstrider","level":6,"display_id":390,"x":5.0,"y":0.0,"z":40.0,"o":6.15,"hp":60,"maxhp":60,"target":0,"combat":false,"dead":false}]}
+)JSON");
+
+    GodviewRecording recording;
+    std::string error;
+    REQUIRE(recording.load(path.string(), error));
+    REQUIRE(error.empty());
+
+    auto players = recording.samplePlayers(1500.0, 1);
+    REQUIRE(players.size() == 1);
+    REQUIRE(std::abs(players.front().player.orientation) < 0.01f);
+
+    auto creatures = recording.sampleCreatures(1500.0, 1);
+    REQUIRE(creatures.size() == 1);
+    REQUIRE(std::abs(creatures.front().creature.orientation) < 0.06f);
+}
+
 TEST_CASE("GodviewRecording finds target or combat event snapshots per map", "[godview][recording]") {
     auto path = writeContractRecording();
 
