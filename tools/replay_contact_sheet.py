@@ -78,6 +78,21 @@ def parse_offsets(value: str) -> list[float]:
     return offsets
 
 
+def parse_ms_values(value: str) -> list[float]:
+    values: list[float] = []
+    for raw in value.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        ms = float(raw)
+        if ms < 0:
+            raise argparse.ArgumentTypeError("server ms values must be non-negative")
+        values.append(ms)
+    if not values:
+        raise argparse.ArgumentTypeError("at least one server ms value is required")
+    return values
+
+
 def format_offset(offset_ms: float) -> str:
     if offset_ms >= 1000 and math.isclose(offset_ms % 1000, 0.0, abs_tol=0.001):
         seconds = int(offset_ms / 1000)
@@ -87,6 +102,12 @@ def format_offset(offset_ms: float) -> str:
     return f"+{offset_ms:g}MS"
 
 
+def format_ms(ms: float) -> str:
+    if math.isclose(ms, round(ms), abs_tol=0.001):
+        return str(int(round(ms)))
+    return f"{ms:g}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("replay", type=Path, help="Godview JSONL recording to replay.")
@@ -94,6 +115,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-path", type=Path, required=True, help="Extracted vanilla data directory.")
     parser.add_argument("--event", action="append", default=None, help="Replay event to capture; repeatable.")
     parser.add_argument("--offset-ms", type=parse_offsets, default=parse_offsets("0,500,3000"))
+    parser.add_argument(
+        "--ms",
+        type=parse_ms_values,
+        default=None,
+        help="Comma-separated explicit server ms values to capture instead of event offsets.",
+    )
     parser.add_argument("--output", type=Path, required=True, help="Contact sheet PNG path.")
     parser.add_argument("--frames-dir", type=Path, default=None, help="Directory for per-frame PNGs.")
     parser.add_argument("--columns", type=int, default=3)
@@ -215,6 +242,14 @@ def frame_name(event: str, offset_ms: float) -> str:
     return f"{clean}_{int(round(offset_ms))}ms.png"
 
 
+def ms_frame_name(ms: float) -> str:
+    return f"ms_{format_ms(ms)}.png"
+
+
+def format_capture_label(event: str, offset_ms: float, active_map: int, capture_ms: float) -> str:
+    return f"{event} {format_offset(offset_ms)} M{active_map} MS{format_ms(capture_ms)}"
+
+
 def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Path) -> None:
     script = Path(__file__).with_name("replay_screenshot_smoke.py")
     command = [
@@ -229,6 +264,32 @@ def run_smoke(args: argparse.Namespace, event: str, offset_ms: float, output: Pa
         event,
         "--event-offset-ms",
         str(offset_ms),
+        "--output",
+        str(output),
+        "--frames",
+        str(args.frames),
+        "--timeout",
+        str(args.timeout),
+    ]
+    if args.keep_overlay:
+        command.append("--no-clean-capture")
+
+    print("running:", " ".join(command), flush=True)
+    subprocess.run(command, check=True)
+
+
+def run_ms_smoke(args: argparse.Namespace, ms: float, output: Path) -> None:
+    script = Path(__file__).with_name("replay_screenshot_smoke.py")
+    command = [
+        sys.executable,
+        str(script),
+        str(args.replay),
+        "--wowee",
+        str(args.wowee),
+        "--data-path",
+        str(args.data_path),
+        "--ms",
+        str(ms),
         "--output",
         str(output),
         "--frames",
@@ -277,20 +338,39 @@ def assemble_sheet(frames: list[tuple[str, Path]], output: Path, columns: int, t
 
 def main() -> int:
     args = parse_args()
+    if args.ms is not None and args.event:
+        print("error: --ms cannot be combined with --event", file=sys.stderr)
+        return 2
+
     events = args.event or ["damage"]
     frames_dir = args.frames_dir or args.output.with_suffix("").parent / f"{args.output.stem}_frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     frames: list[tuple[str, Path]] = []
+    if args.ms is not None:
+        for ms in args.ms:
+            output = frames_dir / ms_frame_name(ms)
+            run_ms_smoke(args, ms, output)
+            frames.append((f"MS{format_ms(ms)}", output))
+        assemble_sheet(frames, args.output, args.columns, args.thumb_width)
+        print(f"OK: wrote replay contact sheet {args.output}")
+        return 0
+
     for event in events:
         normalized_event = smoke.normalize_event(event)
         if not normalized_event:
             print(f"error: unsupported or disabled event: {event}", file=sys.stderr)
             return 2
+        try:
+            active_map, event_ms = smoke.preflight_replay_event(args.replay, normalized_event)
+        except smoke.ReplayError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         for offset_ms in args.offset_ms:
             output = frames_dir / frame_name(normalized_event, offset_ms)
             run_smoke(args, normalized_event, offset_ms, output)
-            frames.append((f"{normalized_event} {format_offset(offset_ms)}", output))
+            label = format_capture_label(normalized_event, offset_ms, active_map, event_ms + offset_ms)
+            frames.append((label, output))
 
     assemble_sheet(frames, args.output, args.columns, args.thumb_width)
     print(f"OK: wrote replay contact sheet {args.output}")

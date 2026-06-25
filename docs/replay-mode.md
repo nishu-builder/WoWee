@@ -229,10 +229,10 @@ Replay mode now uses Coworld v2 identity fields when available:
   legible in god-view screenshots over bright terrain.
 - Marks replay nameplates with a red border and compact `combat` sublabel when
   the recording says the unit is in combat.
-- Marks replay nameplates with an orange border and a compact `target: Name`
+- Marks replay nameplates with an orange border and a compact `-> Name`
   sublabel when the recording contains a current target GUID.
 - Shows units targeted by a recorded player/creature even when they are not
-  otherwise selected, and marks them with a compact `targeted` sublabel.
+  otherwise selected, and marks them with a compact `target` sublabel.
 - Keeps replay corpse nameplates visible with a compact `dead` sublabel so kill
   and death-event captures preserve the defeated unit context.
 - Separates close replay target/source nameplates in screen space when the two
@@ -354,7 +354,9 @@ python3 tools/replay_screenshot_smoke.py /path/to/godview.jsonl \
 
 For a compact visual scrub proof, `tools/replay_contact_sheet.py` runs multiple
 event-relative screenshot smokes and assembles the validated frames into one
-labeled PNG:
+labeled PNG. Each frame label includes the event, offset, replay map, and
+captured server `ms` value so the proof image remains self-describing outside
+the terminal log:
 
 ```bash
 python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
@@ -366,9 +368,9 @@ python3 tools/replay_contact_sheet.py /path/to/godview.jsonl \
   --output build/bin/wowee_replay_contact_sheet.png
 ```
 
-Use `--ms <server-ms>` for deterministic captures inside a known movement
-interval. Explicit `--ms` captures skip event preflight and do not seek to
-`--event`.
+Use `--ms <server-ms>[,<server-ms>...]` for deterministic contact-sheet captures
+inside a known movement interval. Explicit `--ms` captures skip event preflight
+and cannot be combined with `--event`.
 
 Use `--validate-only --output <png>` to re-check an existing screenshot without
 launching WoWee.
@@ -377,7 +379,7 @@ Local validation completed:
 
 - `cmake --build build --parallel "$(sysctl -n hw.logicalcpu)"` passed.
 - `./build/bin/wowee --help` prints `Usage: ./build/bin/wowee [--replay <godview.jsonl>]`.
-- `./build/bin/test_godview_recording` passed 73 assertions covering JSONL
+- `./build/bin/test_godview_recording` passed 183 assertions covering JSONL
   parsing, out-of-order server `ms` sorting, map-filtered interpolation, v1/v2
   GUID handling, recorded equipment, creature interpolation, optional `gender`,
   string/hex GUID values, and malformed-line errors.
