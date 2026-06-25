@@ -413,6 +413,68 @@ def validate_capture(
         validate_event_cue_color(path, expect_cue_color, min_cue_color_pixels)
 
 
+def make_test_rgba(width: int, height: int, fill: tuple[int, int, int, int]) -> bytearray:
+    return bytearray(bytes(fill) * width * height)
+
+
+def fill_test_rect(
+    pixels: bytearray,
+    width: int,
+    x0: int,
+    y0: int,
+    rect_width: int,
+    rect_height: int,
+    color: tuple[int, int, int, int],
+) -> None:
+    row = bytes(color) * rect_width
+    for y in range(y0, y0 + rect_height):
+        offset = (y * width + x0) * 4
+        pixels[offset:offset + len(row)] = row
+
+
+def run_self_test() -> int:
+    width = 64
+    height = 32
+    dark_panel = (12, 16, 20, 255)
+
+    damage_pixels = make_test_rgba(width, height, (96, 96, 96, 255))
+    fill_test_rect(damage_pixels, width, 16, 12, 28, 8, dark_panel)
+    fill_test_rect(damage_pixels, width, 20, 14, 14, 3, (255, 230, 70, 255))
+    damage_count = cue_color_pixel_count(width, height, 6, bytes(damage_pixels), "damage")
+    if damage_count < 40:
+        print(f"error: damage cue self-test counted only {damage_count} pixels", file=sys.stderr)
+        return 1
+
+    death_pixels = make_test_rgba(width, height, (96, 96, 96, 255))
+    fill_test_rect(death_pixels, width, 16, 12, 28, 8, dark_panel)
+    fill_test_rect(death_pixels, width, 20, 14, 14, 3, (244, 113, 111, 255))
+    death_count = cue_color_pixel_count(width, height, 6, bytes(death_pixels), "death")
+    if death_count < 40:
+        print(f"error: death cue self-test counted only {death_count} pixels", file=sys.stderr)
+        return 1
+
+    terrain_pixels = make_test_rgba(width, height, (96, 96, 96, 255))
+    fill_test_rect(terrain_pixels, width, 16, 12, 28, 8, dark_panel)
+    fill_test_rect(terrain_pixels, width, 20, 14, 14, 3, (176, 88, 31, 255))
+    terrain_count = cue_color_pixel_count(width, height, 6, bytes(terrain_pixels), "death")
+    if terrain_count != 0:
+        print(f"error: terrain-red self-test counted {terrain_count} death cue pixels", file=sys.stderr)
+        return 1
+
+    floating_pixels = make_test_rgba(width, height, (96, 96, 96, 255))
+    fill_test_rect(floating_pixels, width, 20, 14, 14, 3, (255, 230, 70, 255))
+    floating_count = cue_color_pixel_count(width, height, 6, bytes(floating_pixels), "damage")
+    if floating_count != 0:
+        print(f"error: floating cue self-test counted {floating_count} damage cue pixels", file=sys.stderr)
+        return 1
+
+    print(
+        "OK: replay screenshot cue-color self-test passed "
+        f"(damage={damage_count}, death={death_count})"
+    )
+    return 0
+
+
 def default_output_path(wowee: Path) -> Path:
     return wowee.resolve().parent / "wowee_replay_smoke.png"
 
@@ -442,6 +504,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-width", type=int, default=640)
     parser.add_argument("--min-height", type=int, default=360)
     parser.add_argument("--min-unique-colors", type=int, default=32)
+    parser.add_argument("--self-test", action="store_true", help="Run internal cue-color validator self-tests.")
     parser.add_argument(
         "--expect-cue-color",
         choices=("damage", "death"),
@@ -466,6 +529,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.self_test:
+        return run_self_test()
+
     wowee = args.wowee.resolve()
     replay = args.replay.resolve() if args.replay else None
     output = (args.output.resolve() if args.output else default_output_path(wowee))
