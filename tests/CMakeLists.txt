@@ -134,6 +134,17 @@ endif()
 add_test(NAME godview_recording COMMAND test_godview_recording)
 register_test_target(test_godview_recording)
 
+# ── test_liquid_type ─────────────────────────────────────────
+add_executable(test_liquid_type
+    test_liquid_type.cpp
+    ${TEST_COMMON_SOURCES}
+)
+target_include_directories(test_liquid_type PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_liquid_type SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_liquid_type PRIVATE catch2_main)
+add_test(NAME liquid_type COMMAND test_liquid_type)
+register_test_target(test_liquid_type)
+
 # ── test_dbc_loader ──────────────────────────────────────────
 add_executable(test_dbc_loader
     test_dbc_loader.cpp
